@@ -1,20 +1,46 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# ⚡ VoltWise
 
-# Run and deploy your AI Studio app
+A premium, AI-powered electricity management app designed to help you track usage, optimize costs, and earn rewards through smart energy choices.
 
-This contains everything you need to run your app locally.
+## Features
 
-View your app in AI Studio: https://ai.studio/apps/drive/1po_CRdzh64QsJBq2x97wIBUMm0qpF42D
+- 📊 **Real-time Energy Dashboard** — Monitor your electricity consumption with intuitive visualizations
+- 🏠 **Appliance Control** — Track and manage individual appliance usage
+- 💡 **Smart Insights** — AI-powered recommendations to reduce your energy bills
+- 🏆 **Rewards & Gamification** — Earn points and achievements for energy-saving habits
+- 📈 **Bill History** — Visualize spending trends and forecast future bills
+- ⚡ **Tariff Optimizer** — Find the best electricity plans for your usage pattern
+- 🔌 **Smart Plug Setup** — Easy onboarding for smart home devices
 
-## Run Locally
+## Tech Stack
 
-**Prerequisites:**  Node.js
+- **Frontend**: React 19 + TypeScript
+- **Styling**: Tailwind CSS
+- **Animations**: Framer Motion
+- **Charts**: Recharts
+- **Icons**: Lucide React
+- **Build Tool**: Vite
 
+## Getting Started
+
+### Prerequisites
+
+- Node.js (v18+)
+
+### Installation
 
 1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+   ```bash
+   npm install
+   ```
+
+2. Run the development server:
+   ```bash
+   npm run dev
+   ```
+
+3. Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+## License
+
+MIT
