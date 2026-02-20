@@ -3,17 +3,24 @@ import { Appliance, ApplianceStatus, Achievement, Challenge } from './types';
 import { Zap, Tv, Thermometer, Wind, Monitor, Coffee } from 'lucide-react';
 
 // Single source of truth for Dashboard numbers to ensure Home & Insights match
+// TODO: Replace mock data with API call — see services/api.ts
 export const DASHBOARD_STATS = {
-    currentTariff: 16.62,
-    tariffType: 'Peak',
-    peakEndsIn: '1h 40m',
-    currentLoad: 1.8, // kW
-    todayCost: 78.50,
-    todayKwh: 12.5,
-    monthBill: 892, // Forecast
-    monthSavings: 267,
-    activeDevices: 5,
-    cheaperRateIn: '1h 42m' // mins or hours formatted
+  // ── Recharge Balance (primary hero gauge data) ──
+  balance: 550,                // Current remaining balance in ₹
+  lastRechargeAmount: 2000,     // Last recharge amount in ₹
+  lastRechargeDate: '03 March, 2026',  // Date of last recharge
+  balancePercent: 75,           // (balance / lastRechargeAmount) * 100 — computed by backend
+  dailyAvgUsage: 61.63,         // Average daily consumption in ₹
+  currentTariff: 6.50,          // Current tariff rate in ₹/kWh
+  yearAverage: 22500,           // Average usage this year in ₹
+
+  // ── Usage stats ──
+  currentLoad: 1.8, // kW
+  todayCost: 78.50,
+  todayKwh: 12.5,
+  monthBill: 892, // Forecast
+  monthSavings: 267,
+  activeDevices: 5,
 };
 
 export const MOCK_APPLIANCES: Appliance[] = [
@@ -62,11 +69,11 @@ export const MOCK_APPLIANCES: Appliance[] = [
 
 // For the Insights "Appliances ON" card - quick visual preview
 export const ACTIVE_DEVICES_PREVIEW = [
-    { icon: 'wind', color: 'text-cyan-500', bg: 'bg-cyan-50' },
-    { icon: 'thermometer', color: 'text-rose-500', bg: 'bg-rose-50' },
-    { icon: 'box', color: 'text-emerald-500', bg: 'bg-emerald-50' },
-    { icon: 'tv', color: 'text-indigo-500', bg: 'bg-indigo-50' },
-    { icon: 'light', color: 'text-amber-500', bg: 'bg-amber-50' }
+  { icon: 'wind', color: 'text-cyan-500', bg: 'bg-cyan-50' },
+  { icon: 'thermometer', color: 'text-rose-500', bg: 'bg-rose-50' },
+  { icon: 'box', color: 'text-emerald-500', bg: 'bg-emerald-50' },
+  { icon: 'tv', color: 'text-indigo-500', bg: 'bg-indigo-50' },
+  { icon: 'light', color: 'text-amber-500', bg: 'bg-amber-50' }
 ];
 
 export const ACHIEVEMENTS: Achievement[] = [
@@ -96,7 +103,7 @@ export const CHART_DATA_TRENDS = [
 ];
 
 export const SPARKLINE_DATA = [
-    { value: 10 }, { value: 15 }, { value: 12 }, { value: 20 }, { value: 18 }, { value: 25 }, { value: 22 }
+  { value: 10 }, { value: 15 }, { value: 12 }, { value: 20 }, { value: 18 }, { value: 25 }, { value: 22 }
 ];
 
 export const TARIFF_RATES = [
@@ -115,11 +122,11 @@ export const TARIFF_RATES = [
 ];
 
 export const CARBON_STATS = {
-    user: 145,      // Your usage
-    neighbors: 180, // Avg neighbor
-    national: 250,  // National avg
-    trees: 12,
-    co2Saved: 67
+  user: 145,      // Your usage
+  neighbors: 180, // Avg neighbor
+  national: 250,  // National avg
+  trees: 12,
+  co2Saved: 67
 };
 
 export const CARBON_COMPARISON_DATA = [

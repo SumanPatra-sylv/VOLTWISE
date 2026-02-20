@@ -192,7 +192,7 @@ const BottomNav: React.FC<{ viewMode: ViewMode }> = ({ viewMode }) => {
   if (isHidden) return null;
 
   return (
-    <nav className="absolute bottom-2 left-2 right-2 h-16 md:bottom-6 md:left-4 md:right-4 md:h-20 bg-white/80 backdrop-blur-xl border border-white/40 rounded-2xl md:rounded-[2rem] flex justify-around items-center px-2 z-50 shadow-soft">
+    <nav className="fixed bottom-4 left-4 right-4 h-16 md:absolute md:bottom-6 md:left-4 md:right-4 md:h-20 bg-white/80 backdrop-blur-xl border border-white/40 rounded-2xl md:rounded-[2rem] flex justify-around items-center px-2 z-50 shadow-soft">
       <NavButton to="/" icon={HomeIcon} label="Home" />
       <NavButton to="/insights" icon={PieChart} label="Insights" />
       <NavButton to="/rewards" icon={Trophy} label="Rewards" />
