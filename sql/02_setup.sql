@@ -774,18 +774,26 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 
 -- ============================================================
--- PART L: STORAGE BUCKETS
+-- PART L: STORAGE BUCKETS (idempotent — safe to re-run)
 -- ============================================================
-INSERT INTO storage.buckets (id, name, public) VALUES ('bills', 'bills', false);
-INSERT INTO storage.buckets (id, name, public) VALUES ('complaints', 'complaints', false);
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('bills', 'bills', false)
+ON CONFLICT (id) DO NOTHING;
 
--- Storage access policies
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('complaints', 'complaints', false)
+ON CONFLICT (id) DO NOTHING;
+
+-- Storage access policies (DROP first to avoid "already exists" errors)
+DROP POLICY IF EXISTS "user_upload_complaints" ON storage.objects;
 CREATE POLICY "user_upload_complaints" ON storage.objects FOR INSERT
   WITH CHECK (bucket_id = 'complaints' AND auth.uid()::text = (storage.foldername(name))[1]);
 
+DROP POLICY IF EXISTS "user_read_own_complaints" ON storage.objects;
 CREATE POLICY "user_read_own_complaints" ON storage.objects FOR SELECT
   USING (bucket_id = 'complaints' AND auth.uid()::text = (storage.foldername(name))[1]);
 
+DROP POLICY IF EXISTS "user_read_own_bills" ON storage.objects;
 CREATE POLICY "user_read_own_bills" ON storage.objects FOR SELECT
   USING (bucket_id = 'bills' AND auth.uid()::text = (storage.foldername(name))[1]);
 
