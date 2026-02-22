@@ -1,0 +1,26 @@
+# NILM Version A - Required packages
+# Install with: pip install -r requirements.txt
+
+# Core data processing
+numpy==1.24.*
+pandas==1.5.*
+scipy==1.10.*
+
+# Machine learning
+scikit-learn==1.2.*
+xgboost==1.7.*
+
+# Visualization
+matplotlib==3.7.*
+
+# HDF5 support (optional, for NILMTK compatibility)
+h5py==3.8.*
+
+# Model persistence
+joblib==1.2.*
+
+# Optional: NILMTK (install separately if needed)
+# pip install nilmtk
+
+# Optional: TensorFlow for Seq2Point (GPU recommended)
+# tensorflow>=2.10.0
