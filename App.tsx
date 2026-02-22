@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Routes, Route, NavLink, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { Home as HomeIcon, PieChart, Trophy, Settings, User, Smartphone, Tablet, Monitor, Zap } from 'lucide-react';
 import { useApp } from './contexts/AppContext';
@@ -52,20 +52,16 @@ const NotificationsRoute: React.FC<{ viewMode: ViewMode }> = ({ viewMode }) => {
 
 // ── Main App ───────────────────────────────────────────────────────
 const App: React.FC = () => {
-  const { viewMode, setViewMode, onboardingComplete, setOnboardingComplete } = useApp();
-  const [loading, setLoading] = useState(true);
+  const { viewMode, setViewMode, user, profile, isLoading, isAuthReady } = useApp();
 
-  // Simulate Initial App Load
-  useEffect(() => {
-    setTimeout(() => setLoading(false), 2000);
-  }, []);
-
-  if (loading) {
+  // Show splash while checking auth
+  if (isLoading || !isAuthReady) {
     return <SplashScreen />;
   }
 
-  if (!onboardingComplete) {
-    return <Onboarding onComplete={() => setOnboardingComplete(true)} />;
+  // Show onboarding if: not logged in OR logged in but hasn't completed onboarding
+  if (!user || !profile?.onboarding_done) {
+    return <Onboarding />;
   }
 
   return (

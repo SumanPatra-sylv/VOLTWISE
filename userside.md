@@ -3,7 +3,7 @@
 > **⚠️ TEAM REFERENCE — DO NOT EDIT CASUALLY**
 > Single source of truth for all consumer-facing functionality.
 > Maps to `database_schema.md` tables and `api_endpoints.md` endpoints.
-> Last updated: 2026-02-20 v1
+> Last updated: 2026-02-21 v2
 
 ---
 
@@ -50,14 +50,19 @@ RLS:  All queries auto-filtered to logged-in user's data via auth.uid()
 ### Onboarding Flow
 
 ```
-Signup → Enter name, phone, consumer_number
-  → OTP verification
-  → Auto-create profile (DB trigger)
-  → Link meter (enter meter_number → match to meters table)
-  → Select home (or create new)
-  → Set tariff plan (auto-detected from DISCOM area or manual)
-  → Onboarding complete → profiles.onboarding_done = TRUE
+Signup → Enter name, phone, password
+  → OTP verification (Supabase Auth)
+  → Auto-create profile (DB trigger: handle_new_user)
+  → Select State (dropdown) → Select DISCOM (filtered from `discoms` table)
+  → Enter consumer number (length-validated per DISCOM's `consumer_number_length`)
+  → Backend finds active tariff_plan for that discom_id + residential
+  → Creates home with tariff_plan_id → Creates meter → Done
+  → profiles.onboarding_done = TRUE
 ```
+
+> [!IMPORTANT]
+> Onboarding MUST use the `discoms` table for state/DISCOM selection.
+> Consumer number validation uses `discoms.consumer_number_length` — no regex.
 
 ---
 
@@ -144,6 +149,21 @@ supabase.channel('meter-live')
 | Detailed breakdown | `bills` | `base_amount` (energy from slabs) + `tax_amount` + `surcharge_amount` = `total_amount` |
 | Bill due date reminder | `bills.due_date` | Notification 3 days before due |
 | Payment history | `payments` | `WHERE user_id = X ORDER BY created_at DESC` |
+
+### PDF Bill Generation
+
+> [!NOTE]
+> Bills are *generated* by FastAPI (not just stored). The flow:
+
+```
+1. FastAPI generates bill → renders HTML template with slab breakdown
+2. Converts to PDF (using weasyprint or reportlab)
+3. Uploads to Supabase Storage: `bills/{user_id}/{bill_month}.pdf`
+4. Stores URL in `bills.pdf_url`
+5. Consumer downloads via: supabase.storage.from('bills').download(pdf_url)
+```
+
+**Endpoint:** `GET /api/bills/{id}/pdf` — returns presigned download URL.
 
 ### Prepaid-Specific
 
@@ -416,6 +436,29 @@ supabase.channel('notifications')
     showToast(payload.new.title, payload.new.message)
     incrementBadgeCount()
   })
+  .subscribe()
+```
+
+### Outage View (Consumer Side)
+
+Consumers see active outages affecting their area:
+
+```typescript
+// Fetch outages for user's area/feeder
+const { data: outages } = await supabase.from('outage_notices')
+  .select('*')
+  .or(`area.eq.${home.area},feeder_id.eq.${home.feeder_id}`)
+  .eq('is_resolved', false)
+  .order('start_time', { ascending: false })
+
+// Subscribe to new outage notices in real-time
+supabase.channel('outages')
+  .on('postgres_changes', { event: 'INSERT', table: 'outage_notices' },
+    (payload) => {
+      if (payload.new.area === home.area || payload.new.feeder_id === home.feeder_id) {
+        showToast('⚡ Power outage reported in your area')
+      }
+    })
   .subscribe()
 ```
 

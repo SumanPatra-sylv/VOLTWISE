@@ -139,7 +139,7 @@ const ApplianceCard: React.FC<Props> = ({ data, compact = false }) => {
             layout={!compact}
             onHoverStart={() => setIsHovered(true)}
             onHoverEnd={() => setIsHovered(false)}
-            whileHover={compact ? {} : { y: -4, shadow: "0 10px 30px -5px rgba(0, 0, 0, 0.1)" }}
+            whileHover={compact ? {} : { y: -4, boxShadow: "0 10px 30px -5px rgba(0, 0, 0, 0.1)" }}
             whileTap={compact ? {} : { scale: 0.98 }}
             className={`
         relative border bg-white flex flex-col justify-between aspect-square overflow-hidden cursor-pointer

@@ -3,7 +3,13 @@
 > **⚠️ TEAM REFERENCE — DO NOT EDIT CASUALLY**
 > Single source of truth for all admin-side functionality.
 > Maps to `database_schema.md` tables and `api_endpoints.md` endpoints.
-> Last updated: 2026-02-20 v1
+> Last updated: 2026-02-21 v2
+
+> [!CAUTION]
+> **PoC uses seeded (simulated) data** for Modules 4, 5, 7, and 9.
+> All query logic is production-ready — only the underlying data is synthetic.
+> When real meters/users are onboarded, these modules work automatically with no code changes.
+> Seeded data is clearly marked with `source = 'seed'` or `created_by = 'seed_script'` where applicable.
 
 ---
 
@@ -184,6 +190,9 @@ def calculate_risk(user_id):
 
 **Purpose:** Grid-level intelligence for DISCOM operations and planning.
 
+> [!NOTE]
+> **PoC: Uses seeded time-series data.** We seed ~2,880 meter_readings per meter (30 days × 96 readings/day at 15-min intervals) with realistic Indian residential load curves (0.3–3.5 kW). All queries below work identically on seeded vs real data.
+
 ### Load Metrics
 
 | Metric | Source | Logic |
@@ -212,6 +221,9 @@ def calculate_risk(user_id):
 ## Module 5: Optimization Impact Dashboard
 
 **Purpose:** Proves the Super App's value — savings, load shifting, scheduling adoption. Critical for stakeholder demos and pilot evaluation.
+
+> [!NOTE]
+> **PoC: Uses seeded data to show "3-month pilot results".** We seed `bills.savings_amount`, `schedules`, `recommendations` (with `is_acted_on = true`), and `carbon_stats` for 50 demo consumers to simulate what the dashboard looks like after a real 3-month pilot. All query logic is production-ready.
 
 ### Metrics & Sources
 
@@ -268,6 +280,9 @@ def optimization_impact():
 ## Module 7: Meter Health & Infrastructure Monitoring
 
 **Purpose:** Utility-grade operational monitoring. Essential for field operations.
+
+> [!NOTE]
+> **PoC: 50 seeded meters with varied `last_reading_at` timestamps.** ~40 online (reading within 1 hour), ~7 stale (6-24 hours ago), ~3 offline (>24 hours ago). This gives the dashboard realistic health distributions to display.
 
 ### Health Metrics & Sources
 
@@ -341,6 +356,9 @@ SLA_CONFIG = {
 
 **Purpose:** Track pilot success metrics. Critical for evaluation and scaling decisions.
 
+> [!NOTE]
+> **PoC: Derived from seeded `profiles`, `homes`, `meters`, `appliances` tables.** No external analytics SDK needed. All metrics come from simple `COUNT(*)` and `AVG()` queries against existing tables. For production: integrate PostHog or Mixpanel for screen-level usage tracking.
+
 ### Metrics & Sources
 
 | Metric | Source | Logic |
@@ -367,60 +385,72 @@ SLA_CONFIG = {
 
 ### Audit Log Schema
 
-> This requires a **new table** `admin_audit_logs` (not yet in `database_schema.md`):
+> `admin_audit_logs` table already exists in `02_setup.sql` (Table 30).
 
 ```sql
+-- Already created in 02_setup.sql
 CREATE TABLE admin_audit_logs (
     id              BIGSERIAL PRIMARY KEY,
     admin_id        UUID NOT NULL REFERENCES profiles(id),
-    action_type     TEXT NOT NULL,        -- 'update_complaint', 'change_tariff', 'export_data', etc.
-    target_table    TEXT,                 -- 'complaints', 'tariff_plans', etc.
-    target_id       UUID,                -- ID of the affected row
-    previous_value  JSONB,               -- Snapshot before change
-    new_value       JSONB,               -- Snapshot after change
-    ip_address      TEXT,
-    user_agent      TEXT,
+    action_type     TEXT NOT NULL,
+    target_table    TEXT,
+    target_id       UUID,
+    previous_value  JSONB,
+    new_value       JSONB,
     created_at      TIMESTAMPTZ DEFAULT now()
 );
-
-CREATE INDEX idx_audit_admin ON admin_audit_logs(admin_id, created_at DESC);
-CREATE INDEX idx_audit_target ON admin_audit_logs(target_table, target_id);
-
--- RLS: Only super_admins can read audit logs
-ALTER TABLE admin_audit_logs ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "super_admin_only" ON admin_audit_logs FOR ALL
-  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'super_admin'));
 ```
 
-### Role-Based Access Matrix
+### Role-Based Access (PoC)
 
-| Module | Super Admin | Regional Admin | Billing Officer | Support Staff | Field Engineer |
-|--------|:-----------:|:--------------:|:---------------:|:-------------:|:--------------:|
-| Executive Dashboard | ✅ Full | ✅ Own region | ✅ Revenue only | ❌ | ❌ |
-| Consumer Management | ✅ Full | ✅ Own region | ✅ Read-only | ✅ Read-only | ❌ |
-| Revenue & Finance | ✅ Full | ✅ Own region | ✅ Full | ❌ | ❌ |
-| Load & Consumption | ✅ Full | ✅ Own region | ❌ | ❌ | ✅ Own area |
-| Optimization Impact | ✅ Full | ✅ Read-only | ❌ | ❌ | ❌ |
-| Appliance Analytics | ✅ Full | ✅ Read-only | ❌ | ❌ | ✅ Own area |
-| Meter Health | ✅ Full | ✅ Own region | ❌ | ❌ | ✅ Full |
-| Complaint & SLA | ✅ Full | ✅ Own region | ✅ Billing only | ✅ Full | ✅ Assigned |
-| App Adoption | ✅ Full | ✅ Read-only | ❌ | ❌ | ❌ |
-| Audit Logs | ✅ Full | ❌ | ❌ | ❌ | ❌ |
+> [!IMPORTANT]
+> **PoC uses only 2 roles: `admin` and `super_admin`** (already in `user_role` enum).
+> The 5-role matrix (billing_officer, support_staff, field_engineer) is v2 — requires new enum values and per-module permission logic.
 
-### Implementation
+| Module | Super Admin | Admin |
+|--------|:-----------:|:-----:|
+| Executive Dashboard | ✅ Full | ✅ Full |
+| Consumer Management | ✅ Full | ✅ Full |
+| Revenue & Finance | ✅ Full | ✅ Full |
+| Load & Consumption | ✅ Full | ✅ Full |
+| Optimization Impact | ✅ Full | ✅ Read-only |
+| Appliance Analytics | ✅ Full | ✅ Read-only |
+| Meter Health | ✅ Full | ✅ Full |
+| Complaint & SLA | ✅ Full | ✅ Full |
+| App Adoption | ✅ Full | ✅ Read-only |
+| Tariff/DISCOM Mgmt | ✅ Full | ✅ Read-only |
+| Outage Management | ✅ Full | ✅ Full |
+| Audit Logs | ✅ Full | ❌ |
+
+### PoC Implementation
 
 ```python
-# FastAPI middleware — role check
+# FastAPI middleware — PoC role check (2 roles only)
 ROLE_PERMISSIONS = {
     "super_admin": ["*"],
-    "admin": ["dashboard", "consumers", "revenue", "load", "optimization", 
-              "appliances", "meter_health", "complaints", "adoption"],
-    "billing_officer": ["dashboard:revenue", "consumers:read", "revenue", "complaints:billing"],
-    "support_staff": ["consumers:read", "complaints"],
-    "field_engineer": ["load:own_area", "appliances:own_area", "meter_health", "complaints:assigned"]
+    "admin": ["dashboard", "consumers", "revenue", "load", "optimization:read",
+              "appliances:read", "meter_health", "complaints", "adoption:read",
+              "tariffs:read", "outages"]
 }
 
-# Middleware checks JWT role claim against module being accessed
+# v2: Add billing_officer, support_staff, field_engineer with granular per-module permissions
+```
+
+### First Admin Setup
+
+> [!WARNING]
+> **There is no admin signup flow.** The first super_admin must be created manually:
+
+```sql
+-- After a user signs up normally via the consumer onboarding:
+-- 1. Find their UUID in Supabase Auth → Users tab
+-- 2. Run this in SQL Editor:
+UPDATE profiles SET role = 'super_admin' WHERE id = 'paste-user-uuid-here';
+```
+
+For subsequent admins, the super_admin can promote users from the admin panel:
+```typescript
+await supabase.from('profiles').update({ role: 'admin' }).eq('id', targetUserId)
 ```
 
 ---
@@ -451,15 +481,92 @@ ROLE_PERMISSIONS = {
 
 ---
 
+## Module 11: Tariff & DISCOM Management
+
+**Purpose:** Admin CRUD for DISCOMs, tariff plans, slabs, and ToD slots. This is how VoltWise becomes multi-state without code changes.
+
+### DISCOM Management
+
+| Action | Implementation | Notes |
+|--------|---------------|-------|
+| List DISCOMs | `supabase.from('discoms').select('*').order('state')` | Show state, code, consumer # length |
+| Add DISCOM | `supabase.from('discoms').insert({ code, name, state, state_code, consumer_number_length })` | Super admin only |
+| Edit DISCOM | `supabase.from('discoms').update({ ... }).eq('id', id)` | Changing `consumer_number_length` doesn't affect existing users |
+| Deactivate | `supabase.from('discoms').update({ is_active: false }).eq('id', id)` | Soft delete — existing consumers keep their plan |
+
+### Tariff Plan Management
+
+| Action | Implementation |
+|--------|---------------|
+| List plans | `supabase.from('tariff_plans').select('*, discom:discoms(name, code), slabs:tariff_slabs(*), slots:tariff_slots(*)').order('effective_from', { ascending: false })` |
+| Create plan | Insert `tariff_plans` → then insert `tariff_slabs` + `tariff_slots` for the new plan |
+| Edit slabs | `supabase.from('tariff_slabs').update({ rate_per_kwh }).eq('id', slabId)` |
+| New version | Create new plan with `effective_from = future_date`, deactivate old plan on that date |
+| Preview impact | Show: "This change affects X consumers. Avg bill impact: +₹Y/month" |
+
+### Important Design Rule
+
+> [!CAUTION]
+> **Never edit an active tariff plan in-place.** Always create a new version with a future `effective_from` date. This preserves billing history integrity.
+
+---
+
+## Module 12: Outage Management
+
+**Purpose:** Create, broadcast, and resolve planned/unplanned outage notices. Consumers in affected areas get real-time notifications.
+
+### CRUD Operations
+
+| Action | Implementation |
+|--------|---------------|
+| Create outage | `supabase.from('outage_notices').insert({ area, feeder_id, reason, start_time, estimated_end, created_by: adminId })` |
+| List active | `supabase.from('outage_notices').select('*').eq('is_resolved', false).order('start_time', { ascending: false })` |
+| Resolve outage | `supabase.from('outage_notices').update({ is_resolved: true, actual_end: now() }).eq('id', id)` |
+| Edit ETA | `supabase.from('outage_notices').update({ estimated_end: newTime }).eq('id', id)` |
+
+### Auto-Notification on Outage Creation
+
+```python
+# FastAPI — triggered after admin creates outage notice
+def notify_affected_consumers(outage):
+    # Find all consumers in the affected area/feeder
+    affected_homes = query("""
+        SELECT h.user_id FROM homes h
+        WHERE h.area = :area OR h.feeder_id = :feeder_id
+    """, area=outage.area, feeder_id=outage.feeder_id)
+    
+    for home in affected_homes:
+        insert_notification(
+            user_id=home.user_id, type='outage',
+            title='Power Outage in Your Area',
+            message=f'{outage.reason}. Estimated restoration: {outage.estimated_end}',
+            icon='alert-triangle', color='text-red-500', bg_color='bg-red-50'
+        )
+```
+
+### Consumer View (Cross-reference with `userside.md`)
+
+Consumers see active outages for their area:
+```typescript
+const { data } = await supabase.from('outage_notices')
+  .select('*')
+  .or(`area.eq.${home.area},feeder_id.eq.${home.feeder_id}`)
+  .eq('is_resolved', false)
+  .order('start_time', { ascending: false })
+```
+
+---
+
 ## DB Tables Required (Admin-Specific)
 
 | Table | Status | Purpose |
 |-------|--------|---------|
 | `profiles` (with role) | ✅ Exists | User/admin identity |
 | `complaints` + `complaint_updates` | ✅ Exists | Complaint workflow |
+| `discoms` | ✅ Exists (02_setup.sql update pending) | DISCOM registry |
 | `tariff_plans` + `tariff_slots` + `tariff_slabs` | ✅ Exists | Tariff management |
 | `outage_notices` | ✅ Exists | Outage CRUD |
-| `admin_audit_logs` | ⚠️ **NEW — needs creation** | Audit trail |
+| `admin_audit_logs` | ✅ Exists | Audit trail |
 
 ---
 
@@ -470,8 +577,29 @@ ROLE_PERMISSIONS = {
 
 | Aspect | Approach |
 |--------|----------|
-| Data volume | Seed 50-100 consumers, 6 months of daily aggregates, 200+ complaints |
+| Data volume | Seed 50 consumers, 6 months of daily aggregates, 200+ complaints |
 | Real logic | All calculations use actual SQL queries, not hardcoded values |
-| Consistency | Mock data in `constants.tsx` must match what the admin panel shows |
+| Seeded modules | Modules 4, 5, 7, 9 use seeded data (clearly marked in UI and SQL) |
 | Realistic metrics | Use Indian DISCOM benchmarks (avg 300 kWh/month residential, ₹6-9/kWh tariff) |
 | Charting | Use Recharts (already in project) for all admin visualizations |
+| RBAC scope | 2 roles only (`admin`, `super_admin`) — 5-role matrix is v2 |
+| DISCOMs | 2 seeded: SBPDCL (Bihar) + MGVCL (Gujarat) with real published rates |
+
+---
+
+## Seeded Data & Interference
+
+> [!IMPORTANT]
+> **Will seeded data interfere with real operations?** No — by design:
+
+| Concern | Why It's Safe |
+|---------|---------------|
+| Real user signs up | Gets their own `profile`, `home`, `meter` — completely isolated by RLS |
+| Seeded consumers show in admin lists | Yes, intentionally — admin should see all consumers. Seeded profiles can be tagged with `location = 'SEED_DATA'` for easy filtering |
+| Dashboard stats include seeded data | Yes — this is the point. The admin dashboard should show realistic numbers |
+| A real user recharges | Only their `meter.balance_amount` changes — seeded meters are unaffected |
+| Tariff engine | Reads from `tariff_plans` + `tariff_slabs` dynamically — seeded tariff data IS the real config (actual SBPDCL/MGVCL rates) |
+| Notifications | Each notification has a `user_id` — seeded notifications only go to seeded users |
+| Cleanup | Run `DELETE FROM profiles WHERE location = 'SEED_DATA'` to remove all seeded data (cascades to homes, meters, etc.) |
+
+**The only risk:** If someone runs the seed script twice, you get duplicate consumers. Solution: seed script uses `ON CONFLICT DO NOTHING` on unique fields like `consumer_number`.

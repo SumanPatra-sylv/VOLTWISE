@@ -1,0 +1,37 @@
+-- ============================================================
+-- VOLTWISE — DISABLE RLS FOR PoC DEVELOPMENT
+-- ============================================================
+-- Run this ONCE in Supabase SQL Editor
+-- Disables Row Level Security on all app tables so queries work
+-- without needing policies. Re-enable + add policies before prod.
+-- ============================================================
+
+ALTER TABLE IF EXISTS profiles DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS homes DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS meters DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS discoms DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS tariff_plans DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS tariff_slabs DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS tariff_slots DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS consumer_master DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS appliances DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS daily_aggregates DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS bills DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS notifications DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS carbon_stats DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS challenges DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS achievements DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS complaints DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS complaint_updates DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS control_logs DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS automation_rules DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS admin_audit_logs DISABLE ROW LEVEL SECURITY;
+
+-- Also grant access to authenticated and anon roles
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon;
+
+-- Verify
+SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;

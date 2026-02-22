@@ -2,10 +2,13 @@
 import React from 'react';
 import LiquidGauge from '../components/LiquidGauge';
 import ApplianceCard from '../components/ApplianceCard';
-import { MOCK_APPLIANCES, DASHBOARD_STATS } from '../constants';
+import { MOCK_APPLIANCES } from '../constants';
 import { Zap, DollarSign, AlertTriangle, ArrowRight, MoreHorizontal, BarChart, ChevronRight, FileText } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Tab } from '../types';
+import { useApp } from '../contexts/AppContext';
+import { getDashboardStats, DashboardStats } from '../services/api';
+import { useApi } from '../hooks/useApi';
 
 type ViewMode = 'mobile' | 'tablet' | 'web';
 
@@ -14,28 +17,93 @@ interface HomeProps {
     viewMode?: ViewMode;
 }
 
+// ── Helpers ────────────────────────────────────────────────────────
+
+/** Greeting based on time of day */
+function getGreeting(): string {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good Morning,';
+    if (hour < 17) return 'Good Afternoon,';
+    return 'Good Evening,';
+}
+
+/** Initials from full name (e.g. "Suman Patra" → "SP") */
+function getInitials(name: string): string {
+    return name
+        .split(' ')
+        .filter(Boolean)
+        .map(w => w[0])
+        .join('')
+        .toUpperCase()
+        .slice(0, 2);
+}
+
+/** Balance health label + color theme */
+function getBalanceStatus(balance: number, lastRecharge: number) {
+    if (lastRecharge <= 0) return { label: 'No Data', theme: 'slate' as const };
+    const pct = (balance / lastRecharge) * 100;
+    if (pct >= 60) return { label: 'Healthy', theme: 'emerald' as const };
+    if (pct >= 30) return { label: 'Moderate', theme: 'amber' as const };
+    return { label: 'Low Balance', theme: 'rose' as const };
+}
+
+const themeColors = {
+    emerald: { bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-emerald-100' },
+    amber: { bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-amber-100' },
+    rose: { bg: 'bg-rose-50', text: 'text-rose-600', border: 'border-rose-100' },
+    slate: { bg: 'bg-slate-50', text: 'text-slate-400', border: 'border-slate-200' },
+};
+
+// ── Component ──────────────────────────────────────────────────────
+
 const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
     const isWeb = viewMode === 'web';
     const isTablet = viewMode === 'tablet';
     const isCompact = isWeb || isTablet;
+
+    // Real data from AppContext
+    const { profile, home } = useApp();
+    const userName = profile?.name || 'User';
+    const initials = getInitials(userName);
+
+    // Dashboard stats from RPC (single call)
+    const { data: stats, loading: statsLoading } = useApi(
+        () => getDashboardStats(home?.id || ''),
+        [home?.id]
+    );
+    const s: DashboardStats = stats || {
+        balance: 0, lastRechargeAmount: 0, lastRechargeDate: '—', balancePercent: 0,
+        dailyAvgUsage: 0, currentTariff: 0, yearAverage: 0, currentLoad: 0,
+        todayCost: 0, todayKwh: 0, monthBill: 0, monthSavings: 0, activeDevices: 0,
+        currentSlotType: 'normal', currentSlotRate: 0,
+        nextSlotChange: '—', nextSlotType: 'normal', nextSlotRate: 0,
+    };
+
+    // Derive balance health
+    const { label: balanceLabel, theme: balanceTheme } = getBalanceStatus(s.balance, s.lastRechargeAmount);
+    const colors = themeColors[balanceTheme];
+    const balancePercent = s.lastRechargeAmount > 0 ? (s.balance / s.lastRechargeAmount) * 100 : 0;
+
+    // Current tariff: prefer ToD slot rate, fallback to base tariff
+    const currentTariff = s.currentSlotRate || s.currentTariff || 0;
 
     return (
         <div className={`pt-6 pb-32 overflow-y-auto h-full no-scrollbar relative ${isWeb ? 'px-8' : 'px-5'}`}>
             {/* Header */}
             <header className="flex justify-between items-center mb-4">
                 <div>
-                    <h1 className={`text-slate-500 font-medium ${isCompact ? 'text-xs' : 'text-sm'}`}>Good Morning,</h1>
-                    <h2 className={`font-bold text-slate-800 tracking-tight ${isCompact ? 'text-xl' : 'text-2xl'}`}>Rohit Sharma</h2>
+                    <h1 className={`text-slate-500 font-medium ${isCompact ? 'text-xs' : 'text-sm'}`}>{getGreeting()}</h1>
+                    <h2 className={`font-bold text-slate-800 tracking-tight ${isCompact ? 'text-xl' : 'text-2xl'}`}>{userName}</h2>
                 </div>
                 <button
                     onClick={() => onNavigate('Profile')}
                     className={`rounded-full bg-white border border-slate-100 shadow-sm flex items-center justify-center text-slate-800 font-bold hover:shadow-md transition-shadow ${isCompact ? 'w-10 h-10 text-sm' : 'w-12 h-12'}`}
                 >
-                    RS
+                    {initials}
                 </button>
             </header>
 
-            {/* BENTO GRID LAYOUT - Responsive Wrapper Structure */}
+            {/* BENTO GRID LAYOUT */}
             <div className={`grid gap-3 mb-6 ${isWeb ? 'grid-cols-4' : isTablet ? 'grid-cols-4' : 'grid-cols-2'}`}>
 
                 {/* Left Column: Hero Liquid Gauge (Full Height) */}
@@ -45,40 +113,42 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                     className={`bg-white shadow-soft border border-slate-100 relative overflow-hidden flex flex-col items-center justify-center col-span-2 rounded-[2rem] p-4 ${isWeb || isTablet ? 'min-h-[450px] h-full' : 'p-6 min-h-[450px]'}`}
                 >
                     {/* Background Decoration */}
-                    <div className={`absolute top-0 right-0 ${((DASHBOARD_STATS.balance / DASHBOARD_STATS.lastRechargeAmount) * 100) >= 60 ? 'bg-emerald-50' : ((DASHBOARD_STATS.balance / DASHBOARD_STATS.lastRechargeAmount) * 100) >= 30 ? 'bg-amber-50' : 'bg-rose-50'} rounded-bl-[4rem] -z-0 ${isCompact ? 'w-20 h-20' : 'w-32 h-32'}`}></div>
+                    <div className={`absolute top-0 right-0 ${colors.bg} rounded-bl-[4rem] -z-0 ${isCompact ? 'w-20 h-20' : 'w-32 h-32'}`}></div>
 
                     <div className={`flex justify-between w-full items-start absolute px-4 z-10 ${isCompact ? 'top-3' : 'top-6 px-6'}`}>
-                        <span className={`rounded-full font-bold uppercase tracking-wider border ${isCompact ? 'px-2 py-0.5 text-[10px]' : 'px-3 py-1 text-xs'} ${((DASHBOARD_STATS.balance / DASHBOARD_STATS.lastRechargeAmount) * 100) >= 60
-                            ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
-                            : ((DASHBOARD_STATS.balance / DASHBOARD_STATS.lastRechargeAmount) * 100) >= 30
-                                ? 'bg-amber-50 text-amber-600 border-amber-100'
-                                : 'bg-rose-50 text-rose-600 border-rose-100'
-                            }`}>
-                            {((DASHBOARD_STATS.balance / DASHBOARD_STATS.lastRechargeAmount) * 100) >= 60 ? 'Healthy' : ((DASHBOARD_STATS.balance / DASHBOARD_STATS.lastRechargeAmount) * 100) >= 30 ? 'Moderate' : 'Low Balance'}
+                        <span className={`rounded-full font-bold uppercase tracking-wider border ${isCompact ? 'px-2 py-0.5 text-[10px]' : 'px-3 py-1 text-xs'} ${colors.bg} ${colors.text} ${colors.border}`}>
+                            {statsLoading ? '...' : balanceLabel}
                         </span>
                         <MoreHorizontal className={`text-slate-300 ${isCompact ? 'w-4 h-4' : ''}`} />
                     </div>
 
                     <LiquidGauge
-                        balancePercent={(DASHBOARD_STATS.balance / DASHBOARD_STATS.lastRechargeAmount) * 100}
-                        balanceAmount={DASHBOARD_STATS.balance}
-                        label={`Recharged ₹${DASHBOARD_STATS.lastRechargeAmount}`}
-                        subLabel={`Recharged on ${DASHBOARD_STATS.lastRechargeDate}`}
+                        balancePercent={balancePercent}
+                        balanceAmount={s.balance}
+                        label={s.lastRechargeAmount > 0 ? `Recharged ₹${s.lastRechargeAmount}` : 'No recharge yet'}
+                        subLabel={s.lastRechargeDate !== '—' ? `Recharged on ${s.lastRechargeDate}` : ''}
                         compact={isCompact}
                     />
 
-                    {/* Stats Footer */}
+                    {/* Stats Footer — ToD-aware tariff */}
                     <div className={`w-full flex justify-between items-center px-4 relative z-10 ${isCompact ? 'mt-4' : 'mt-10'}`}>
                         <div className="text-center">
-                            <p className={`text-slate-400 font-medium uppercase tracking-wide ${isCompact ? 'text-[10px]' : 'text-xs'}`}>Current Tariff</p>
-                            <p className={`text-slate-800 font-bold ${isCompact ? 'text-base' : 'text-xl'}`}>₹{DASHBOARD_STATS.currentTariff}/kWh</p>
+                            <p className={`text-slate-400 font-medium uppercase tracking-wide ${isCompact ? 'text-[10px]' : 'text-xs'}`}>
+                                Current Tariff
+                                {s.currentSlotType !== 'normal' && (
+                                    <span className={`ml-1 ${s.currentSlotType === 'peak' ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                        ({s.currentSlotType})
+                                    </span>
+                                )}
+                            </p>
+                            <p className={`text-slate-800 font-bold ${isCompact ? 'text-base' : 'text-xl'}`}>₹{currentTariff.toFixed(2)}/kWh</p>
                         </div>
                         <div className={`bg-slate-100 ${isCompact ? 'h-8 w-[1px]' : 'h-10 w-[1px]'}`}></div>
                         <div className="text-center">
                             <p className={`text-slate-400 font-medium uppercase tracking-wide ${isCompact ? 'text-[10px]' : 'text-xs'}`}>Today's Usage</p>
                             <div className="flex flex-col">
-                                <span className={`text-slate-800 font-bold leading-none ${isCompact ? 'text-base' : 'text-xl'}`}>₹{DASHBOARD_STATS.todayCost.toFixed(2)}</span>
-                                <span className={`text-slate-400 font-bold mt-1 ${isCompact ? 'text-[9px]' : 'text-xs'}`}>{DASHBOARD_STATS.todayKwh} kWh</span>
+                                <span className={`text-slate-800 font-bold leading-none ${isCompact ? 'text-base' : 'text-xl'}`}>₹{s.todayCost.toFixed(2)}</span>
+                                <span className={`text-slate-400 font-bold mt-1 ${isCompact ? 'text-[9px]' : 'text-xs'}`}>{s.todayKwh} kWh</span>
                             </div>
                         </div>
                     </div>
@@ -114,10 +184,10 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                             <div>
                                 <p className={`text-slate-500 font-medium mb-1 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>Month Forecast</p>
                                 <div className="flex items-end gap-1">
-                                    <span className={`font-bold text-slate-800 ${isCompact ? 'text-base' : 'text-xl'}`}>₹{DASHBOARD_STATS.monthBill}</span>
+                                    <span className={`font-bold text-slate-800 ${isCompact ? 'text-base' : 'text-xl'}`}>₹{s.monthBill}</span>
                                 </div>
                                 <div className={`w-full bg-slate-100 rounded-full mt-2 overflow-hidden ${isCompact ? 'h-1' : 'h-1.5'}`}>
-                                    <div className="bg-indigo-500 w-[70%] h-full rounded-full"></div>
+                                    <div className="bg-indigo-500 h-full rounded-full" style={{ width: `${Math.min((s.monthBill / (s.dailyAvgUsage * 30 || 1)) * 100, 100)}%` }}></div>
                                 </div>
                             </div>
                         </motion.div>
@@ -137,7 +207,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                             <div>
                                 <p className={`text-slate-300 font-medium mb-1 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>Total Savings</p>
                                 <div className="flex items-end gap-1">
-                                    <span className={`font-bold ${isCompact ? 'text-base' : 'text-xl'}`}>₹{DASHBOARD_STATS.monthSavings}</span>
+                                    <span className={`font-bold ${isCompact ? 'text-base' : 'text-xl'}`}>₹{s.monthSavings}</span>
                                     <span className={`text-emerald-400 mb-0.5 ${isCompact ? 'text-[9px]' : 'text-[10px]'}`}>+12%</span>
                                 </div>
                                 <p className={`text-slate-400 mt-0.5 ${isCompact ? 'text-[9px]' : 'text-[10px]'}`}>vs last month</p>
@@ -145,28 +215,32 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                         </motion.div>
                     </div>
 
-                    {/* Item 4: Wide Banner - Alert */}
+                    {/* Item 4: Wide Banner - Alert / ToD Slot Info */}
                     <motion.div
                         initial={isCompact ? false : { opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: isCompact ? 0 : 0.3 }}
                         whileHover={isCompact ? {} : { scale: 1.01 }}
-                        className={`bg-rose-50 border border-rose-100 flex items-center justify-between rounded-[2rem] p-4 ${isCompact ? 'rounded-xl p-3' : 'p-5'}`}
+                        className={`${s.currentSlotType === 'peak' ? 'bg-rose-50 border-rose-100' : s.currentSlotType === 'off-peak' ? 'bg-emerald-50 border-emerald-100' : 'bg-amber-50 border-amber-100'} border flex items-center justify-between rounded-[2rem] p-4 ${isCompact ? 'rounded-xl p-3' : 'p-5'}`}
                     >
                         <div className="flex items-center gap-3">
-                            <div className={`rounded-full bg-white flex items-center justify-center shadow-sm text-rose-500 ${isCompact ? 'w-9 h-9' : 'w-12 h-12 animate-pulse-slow'}`}>
+                            <div className={`rounded-full bg-white flex items-center justify-center shadow-sm ${s.currentSlotType === 'peak' ? 'text-rose-500' : s.currentSlotType === 'off-peak' ? 'text-emerald-500' : 'text-amber-500'} ${isCompact ? 'w-9 h-9' : 'w-12 h-12 animate-pulse-slow'}`}>
                                 <AlertTriangle className={isCompact ? 'w-4 h-4' : 'w-6 h-6'} />
                             </div>
                             <div>
-                                <h3 className={`font-bold text-slate-800 ${isCompact ? 'text-sm' : ''}`}>High Usage Alert</h3>
-                                <p className={`text-slate-500 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>Consider turning off AC to save ₹32/hr</p>
+                                <h3 className={`font-bold text-slate-800 ${isCompact ? 'text-sm' : ''}`}>
+                                    {s.currentSlotType === 'peak' ? 'Peak Hours Active' : s.currentSlotType === 'off-peak' ? 'Off-Peak — Save Now!' : 'Normal Tariff Hours'}
+                                </h3>
+                                <p className={`text-slate-500 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>
+                                    Next: {s.nextSlotType} at {s.nextSlotChange} (₹{s.nextSlotRate.toFixed(2)}/kWh)
+                                </p>
                             </div>
                         </div>
                         <button
                             onClick={() => onNavigate('Optimizer')}
-                            className={`bg-rose-500 text-white font-bold shadow-lg shadow-rose-200 hover:scale-105 transition-transform ${isCompact ? 'px-3 py-1.5 rounded-lg text-[10px]' : 'px-4 py-2 rounded-xl text-xs'}`}
+                            className={`${s.currentSlotType === 'peak' ? 'bg-rose-500' : s.currentSlotType === 'off-peak' ? 'bg-emerald-500' : 'bg-amber-500'} text-white font-bold shadow-lg hover:scale-105 transition-transform ${isCompact ? 'px-3 py-1.5 rounded-lg text-[10px]' : 'px-4 py-2 rounded-xl text-xs'}`}
                         >
-                            Fix
+                            {s.currentSlotType === 'peak' ? 'Optimize' : 'Schedule'}
                         </button>
                     </motion.div>
 
@@ -185,7 +259,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                                 <div>
                                     <h3 className={`font-medium text-slate-500 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>Average Usage This Year</h3>
                                     <div className="flex items-baseline gap-1">
-                                        <span className={`font-bold text-slate-800 ${isCompact ? 'text-lg' : 'text-2xl'}`}>₹{DASHBOARD_STATS.yearAverage.toLocaleString()}</span>
+                                        <span className={`font-bold text-slate-800 ${isCompact ? 'text-lg' : 'text-2xl'}`}>₹{(s.yearAverage || s.monthBill).toLocaleString()}</span>
                                         <span className={`text-emerald-500 font-medium ${isCompact ? 'text-[9px]' : 'text-[10px]'}`}>-5% vs last year</span>
                                     </div>
                                 </div>

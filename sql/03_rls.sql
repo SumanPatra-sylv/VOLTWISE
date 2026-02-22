@@ -270,6 +270,23 @@ CREATE POLICY "super_admin_audit" ON admin_audit_logs FOR SELECT
   USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'super_admin'));
 
 
+-- ========================
+-- EXPLICIT GRANTS (required by Supabase — RLS alone isn't enough)
+-- ========================
+-- Public reference tables: readable by everyone (including anon before login)
+GRANT SELECT ON discoms TO anon, authenticated;
+GRANT SELECT ON tariff_plans TO anon, authenticated;
+GRANT SELECT ON tariff_slabs TO anon, authenticated;
+GRANT SELECT ON tariff_slots TO anon, authenticated;
+
+-- Onboarding: authenticated users need INSERT on homes + meters
+GRANT INSERT ON homes TO authenticated;
+GRANT INSERT ON meters TO authenticated;
+
+-- Users need to update their own profile during onboarding
+GRANT UPDATE ON profiles TO authenticated;
+
+
 -- ============================================================
 -- DONE! All tables now show "RLS Enabled" in Supabase.
 -- ============================================================

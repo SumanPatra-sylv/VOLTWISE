@@ -16,6 +16,7 @@ CREATE TYPE meter_type       AS ENUM ('prepaid', 'postpaid');
 CREATE TYPE tariff_category  AS ENUM ('residential', 'commercial', 'industrial', 'agricultural');
 CREATE TYPE appliance_status AS ENUM ('ON', 'OFF', 'SCHEDULED', 'WARNING');
 CREATE TYPE appliance_source AS ENUM ('nilm', 'smart_plug', 'manual');
+CREATE TYPE appliance_category AS ENUM ('ac', 'geyser', 'refrigerator', 'washing_machine', 'fan', 'tv', 'lighting', 'other');
 CREATE TYPE plug_status      AS ENUM ('online', 'offline', 'pairing');
 CREATE TYPE schedule_repeat  AS ENUM ('once', 'daily', 'weekdays', 'weekends', 'custom');
 CREATE TYPE bill_status      AS ENUM ('generated', 'paid', 'overdue', 'partial');
@@ -179,6 +180,8 @@ CREATE TABLE appliances (
     name                TEXT NOT NULL,
     icon                TEXT NOT NULL DEFAULT 'zap',
     source              appliance_source DEFAULT 'manual',
+    category            appliance_category DEFAULT 'other',
+    is_controllable     BOOLEAN DEFAULT TRUE,
     rated_power_w       INT,
     current_power_w     NUMERIC(8,2) DEFAULT 0,
     status              appliance_status DEFAULT 'OFF',
@@ -677,9 +680,18 @@ BEGIN
   SELECT tariff_plan_id INTO v_plan_id FROM homes WHERE id = p_home_id;
   v_current_hour := EXTRACT(HOUR FROM now() AT TIME ZONE 'Asia/Kolkata');
 
+  -- Midnight-aware slot matching:
+  -- Normal slot (e.g. 6->18): start_hour <= hour < end_hour
+  -- Wrap slot   (e.g. 22->6): hour >= start_hour OR hour < end_hour
   SELECT slot_type, rate INTO v_current_slot
   FROM tariff_slots
-  WHERE plan_id = v_plan_id AND start_hour <= v_current_hour AND end_hour > v_current_hour
+  WHERE plan_id = v_plan_id
+    AND (
+      CASE WHEN start_hour < end_hour
+        THEN v_current_hour >= start_hour AND v_current_hour < end_hour
+        ELSE v_current_hour >= start_hour OR  v_current_hour < end_hour
+      END
+    )
   LIMIT 1;
 
   SELECT slot_type, rate, start_hour INTO v_next_slot
