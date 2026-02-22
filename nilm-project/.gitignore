@@ -1,0 +1,103 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Conda
+*.conda
+conda-meta/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+*.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Data files (too large for git)
+data/raw/
+data/h5/
+*.h5
+*.hdf5
+*.csv
+*.dat
+*.tar.gz
+*.tar.bz2
+*.zip
+
+# Keep processed directory structure but not large files
+!data/processed/.gitkeep
+
+# Model files (can be large)
+models/edge/*.joblib
+models/seq2point/*.h5
+models/seq2point/*.npz
+seq2point_cloud/models/cloud/*.h5
+seq2point_cloud/models/cloud/*.json
+
+# Keep model directory structure
+!models/edge/.gitkeep
+!models/seq2point/.gitkeep
+!seq2point_cloud/models/cloud/.gitkeep
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Test outputs
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Documentation builds
+docs/_build/
+
+# Evaluation reports (regenerated)
+evaluation_report.txt

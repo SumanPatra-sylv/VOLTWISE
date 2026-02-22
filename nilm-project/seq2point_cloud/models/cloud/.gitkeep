@@ -1,0 +1,5 @@
+# This directory stores trained Seq2Point models
+# Output files:
+#   seq2point_{appliance}.h5        - Trained Keras model
+#   seq2point_{appliance}_best.h5   - Best checkpoint during training
+#   seq2point_{appliance}_params.json - Normalization parameters
