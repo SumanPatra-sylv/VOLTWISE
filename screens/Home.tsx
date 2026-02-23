@@ -1,14 +1,16 @@
 
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import LiquidGauge from '../components/LiquidGauge';
 import ApplianceCard from '../components/ApplianceCard';
-import { MOCK_APPLIANCES } from '../constants';
+import RechargeModal from '../components/RechargeModal';
 import { Zap, DollarSign, AlertTriangle, ArrowRight, MoreHorizontal, BarChart, ChevronRight, FileText } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { Tab } from '../types';
+import { Tab, Appliance, ApplianceStatus } from '../types';
 import { useApp } from '../contexts/AppContext';
 import { getDashboardStats, DashboardStats } from '../services/api';
 import { useApi } from '../hooks/useApi';
+import { supabase } from '../services/supabase';
+import { DBAppliance } from '../types/database';
 
 type ViewMode = 'mobile' | 'tablet' | 'web';
 
@@ -62,9 +64,28 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
     const isCompact = isWeb || isTablet;
 
     // Real data from AppContext
-    const { profile, home } = useApp();
+    const { profile, home, meter, user, refreshMeter } = useApp();
     const userName = profile?.name || 'User';
     const initials = getInitials(userName);
+
+    // Recharge modal state
+    const [showRechargeModal, setShowRechargeModal] = useState(false);
+    const [currentBalance, setCurrentBalance] = useState(0);
+    const [lastRechargeAmount, setLastRechargeAmount] = useState(0);
+    const [lastRechargeDate, setLastRechargeDate] = useState('—');
+
+    // Sync balance from meter (initial load)
+    useEffect(() => {
+        if (meter?.balance_amount !== undefined) {
+            setCurrentBalance(meter.balance_amount);
+        }
+        if (meter?.last_recharge_amount) {
+            setLastRechargeAmount(meter.last_recharge_amount);
+        }
+        if (meter?.last_recharge_date) {
+            setLastRechargeDate(new Date(meter.last_recharge_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }));
+        }
+    }, [meter]);
 
     // Dashboard stats from RPC (single call)
     const { data: stats, loading: statsLoading } = useApi(
@@ -79,13 +100,112 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
         nextSlotChange: '—', nextSlotType: 'normal', nextSlotRate: 0,
     };
 
-    // Derive balance health
-    const { label: balanceLabel, theme: balanceTheme } = getBalanceStatus(s.balance, s.lastRechargeAmount);
+    // Derive balance health - use local state which updates after recharge
+    const displayBalance = currentBalance > 0 ? currentBalance : s.balance;
+    const displayLastRecharge = lastRechargeAmount > 0 ? lastRechargeAmount : s.lastRechargeAmount;
+    const { label: balanceLabel, theme: balanceTheme } = getBalanceStatus(displayBalance, displayLastRecharge);
     const colors = themeColors[balanceTheme];
-    const balancePercent = s.lastRechargeAmount > 0 ? (s.balance / s.lastRechargeAmount) * 100 : 0;
+    const balancePercent = displayLastRecharge > 0 ? (displayBalance / displayLastRecharge) * 100 : 0;
 
     // Current tariff: prefer ToD slot rate, fallback to base tariff
     const currentTariff = s.currentSlotRate || s.currentTariff || 0;
+
+    // ── Appliances from DB (same as Control Center) ──
+    const [appliances, setAppliances] = useState<Appliance[]>([]);
+    const [appliancesLoading, setAppliancesLoading] = useState(true);
+
+    const CATEGORY_ICONS: Record<string, string> = {
+        ac: 'wind', geyser: 'thermometer', refrigerator: 'box',
+        washing_machine: 'disc', fan: 'disc', tv: 'tv', lighting: 'lightbulb', other: 'zap',
+    };
+
+    const fetchAppliances = useCallback(async () => {
+        if (!home?.id) {
+            setAppliancesLoading(false);
+            return;
+        }
+        try {
+            const { data, error } = await supabase
+                .from('appliances')
+                .select('*')
+                .eq('home_id', home.id)
+                .eq('is_active', true)
+                .order('sort_order', { ascending: true })
+                .limit(8); // Show max 8 on home page
+            if (error) throw error;
+            // Transform DBAppliance to Appliance format for ApplianceCard
+            const transformed: Appliance[] = (data || []).map((db: DBAppliance) => ({
+                id: db.id,
+                name: db.name || db.category,
+                icon: CATEGORY_ICONS[db.category] || 'zap',
+                status: db.status === 'ON' ? ApplianceStatus.ON : 
+                        db.status === 'WARNING' ? ApplianceStatus.WARNING :
+                        db.status === 'SCHEDULED' ? ApplianceStatus.SCHEDULED : ApplianceStatus.OFF,
+                power: db.rated_power_w,
+                costPerHour: (db.rated_power_w / 1000) * currentTariff,
+            }));
+            setAppliances(transformed);
+        } catch (err) {
+            console.error('Failed to fetch appliances:', err);
+        } finally {
+            setAppliancesLoading(false);
+        }
+    }, [home?.id, currentTariff]);
+
+    useEffect(() => {
+        fetchAppliances();
+    }, [fetchAppliances]);
+
+    // Real-time subscription to sync appliance status with Control Center
+    useEffect(() => {
+        if (!home?.id) return;
+        
+        const channel = supabase
+            .channel('home-appliances')
+            .on(
+                'postgres_changes',
+                {
+                    event: '*',
+                    schema: 'public',
+                    table: 'appliances',
+                    filter: `home_id=eq.${home.id}`
+                },
+                () => {
+                    // Re-fetch on any change (insert, update, delete)
+                    fetchAppliances();
+                }
+            )
+            .subscribe();
+        
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [home?.id, fetchAppliances]);
+
+    // Toggle appliance status (syncs with Control Center via realtime)
+    const handleApplianceToggle = useCallback(async (applianceId: string, newStatus: boolean) => {
+        try {
+            const { error } = await supabase
+                .from('appliances')
+                .update({ 
+                    status: newStatus ? 'ON' : 'OFF',
+                    updated_at: new Date().toISOString() 
+                })
+                .eq('id', applianceId);
+            if (error) throw error;
+            
+            // Log the action
+            await supabase.from('control_logs').insert({
+                appliance_id: applianceId,
+                user_id: (await supabase.auth.getUser()).data.user?.id,
+                action: newStatus ? 'turn_on' : 'turn_off',
+                trigger_source: 'manual',
+                result: 'success'
+            });
+        } catch (err) {
+            console.error('Failed to toggle appliance:', err);
+        }
+    }, []);
 
     return (
         <div className={`pt-6 pb-32 overflow-y-auto h-full no-scrollbar relative ${isWeb ? 'px-8' : 'px-5'}`}>
@@ -124,9 +244,9 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
 
                     <LiquidGauge
                         balancePercent={balancePercent}
-                        balanceAmount={s.balance}
-                        label={s.lastRechargeAmount > 0 ? `Recharged ₹${s.lastRechargeAmount}` : 'No recharge yet'}
-                        subLabel={s.lastRechargeDate !== '—' ? `Recharged on ${s.lastRechargeDate}` : ''}
+                        balanceAmount={displayBalance}
+                        label={displayLastRecharge > 0 ? `Recharged ₹${displayLastRecharge}` : 'No recharge yet'}
+                        subLabel={lastRechargeDate !== '—' ? `Recharged on ${lastRechargeDate}` : (s.lastRechargeDate !== '—' ? `Recharged on ${s.lastRechargeDate}` : '')}
                         compact={isCompact}
                     />
 
@@ -155,7 +275,10 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
 
                     {/* Action Buttons: Recharge + View Bill */}
                     <div className={`w-full flex gap-3 z-20 ${isCompact ? 'mt-3' : 'mt-6'}`}>
-                        <button className={`flex-1 bg-slate-900 text-white font-bold rounded-xl shadow-lg shadow-slate-200 active:scale-95 transition-transform flex items-center justify-center gap-2 ${isCompact ? 'py-2 text-xs' : 'py-3 text-base'}`}>
+                        <button 
+                            onClick={() => setShowRechargeModal(true)}
+                            className={`flex-1 bg-slate-900 text-white font-bold rounded-xl shadow-lg shadow-slate-200 active:scale-95 transition-transform flex items-center justify-center gap-2 ${isCompact ? 'py-2 text-xs' : 'py-3 text-base'}`}
+                        >
                             <Zap className={isCompact ? 'w-3 h-3' : 'w-4 h-4'} fill="currentColor" />
                             Recharge
                         </button>
@@ -287,19 +410,61 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                     </button>
                 </div>
 
-                <div className={`grid gap-3 ${isWeb ? 'grid-cols-4' : isTablet ? 'grid-cols-4' : 'grid-cols-2'}`}>
-                    {MOCK_APPLIANCES.map((appliance, idx) => (
-                        <motion.div
-                            key={appliance.id}
-                            initial={isCompact ? false : { opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: isCompact ? 0 : 0.1 * idx }}
+                {appliancesLoading ? (
+                    <div className="flex items-center justify-center py-12">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-600"></div>
+                    </div>
+                ) : appliances.length === 0 ? (
+                    <div className="bg-slate-50 rounded-2xl py-10 text-center">
+                        <Zap className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                        <p className="text-slate-500 font-medium">No devices added yet</p>
+                        <button
+                            onClick={() => onNavigate('Control')}
+                            className="mt-3 text-cyan-600 font-bold text-sm hover:underline"
                         >
-                            <ApplianceCard data={appliance} compact={isCompact} />
-                        </motion.div>
-                    ))}
-                </div>
+                            Add your first device →
+                        </button>
+                    </div>
+                ) : (
+                    <div className={`grid gap-3 ${isWeb ? 'grid-cols-4' : isTablet ? 'grid-cols-4' : 'grid-cols-2'}`}>
+                        {appliances.map((appliance, idx) => (
+                            <motion.div
+                                key={appliance.id}
+                                initial={isCompact ? false : { opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: isCompact ? 0 : 0.1 * idx }}
+                            >
+                                <ApplianceCard 
+                                    data={appliance} 
+                                    compact={isCompact} 
+                                    onToggle={handleApplianceToggle}
+                                />
+                            </motion.div>
+                        ))}
+                    </div>
+                )}
             </section>
+
+            {/* Recharge Modal */}
+            {meter && user && (
+                <RechargeModal
+                    isOpen={showRechargeModal}
+                    onClose={() => setShowRechargeModal(false)}
+                    meterId={meter.id}
+                    userId={user.id}
+                    userName={profile?.name}
+                    userEmail={user.email}
+                    userPhone={profile?.phone || undefined}
+                    currentBalance={currentBalance}
+                    onSuccess={(newBalance, rechargeAmount) => {
+                        setCurrentBalance(newBalance);
+                        setLastRechargeAmount(rechargeAmount);
+                        setLastRechargeDate(new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }));
+                        // Refresh meter in context so tab switching keeps updated value
+                        refreshMeter();
+                    }}
+                />
+            )}
 
         </div>
     );
