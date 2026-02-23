@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 interface Props {
     data: Appliance;
     compact?: boolean;
+    onToggle?: (id: string, newStatus: boolean) => void;
 }
 
 // --- Custom Animated Icons ---
@@ -100,19 +101,32 @@ const getCustomIcon = (iconName: string, isOn: boolean, isHovered: boolean = fal
     }
 };
 
-const ApplianceCard: React.FC<Props> = ({ data, compact = false }) => {
+const ApplianceCard: React.FC<Props> = ({ data, compact = false, onToggle }) => {
     const [isOn, setIsOn] = useState(data.status === ApplianceStatus.ON || data.status === ApplianceStatus.WARNING);
     const [isScheduling, setIsScheduling] = useState(false);
     const [scheduleTime, setScheduleTime] = useState(data.scheduleTime || "06:00");
     const [hasSchedule, setHasSchedule] = useState(data.status === ApplianceStatus.SCHEDULED);
     // Hover state specifically for micro-interaction
     const [isHovered, setIsHovered] = useState(false);
+    const [isToggling, setIsToggling] = useState(false);
+
+    // Sync local state when prop changes (from realtime updates)
+    React.useEffect(() => {
+        setIsOn(data.status === ApplianceStatus.ON || data.status === ApplianceStatus.WARNING);
+    }, [data.status]);
 
     const isWarning = data.status === ApplianceStatus.WARNING;
 
-    const handleToggle = (e: React.MouseEvent) => {
+    const handleToggle = async (e: React.MouseEvent) => {
         e.stopPropagation();
-        setIsOn(!isOn);
+        if (isToggling) return;
+        const newStatus = !isOn;
+        setIsToggling(true);
+        setIsOn(newStatus); // Optimistic update
+        if (onToggle) {
+            await onToggle(data.id, newStatus);
+        }
+        setIsToggling(false);
     };
 
     const toggleScheduleMode = (e: React.MouseEvent) => {

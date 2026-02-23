@@ -39,6 +39,7 @@ interface AppContextType {
     // Data refresh
     refreshProfile: () => Promise<void>;
     refreshHome: () => Promise<void>;
+    refreshMeter: () => Promise<void>;
 
     // Onboarding — just needs consumer number, auto-derives everything else
     lookupConsumer: (consumerNumber: string) => Promise<{ data: DBConsumerMaster | null; error: any }>;
@@ -243,6 +244,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
     }, [authState.user, fetchPrimaryHome, fetchActiveMeter]);
 
+    const refreshMeter = useCallback(async () => {
+        if (!authState.home) return;
+        const meter = await fetchActiveMeter(authState.home.id);
+        if (meter) {
+            setAuthState(prev => ({ ...prev, meter }));
+        }
+    }, [authState.home, fetchActiveMeter]);
+
     // ── Lookup consumer in consumer_master ─────────────────────────
     // Simulates: GET /consumer/{consumer_id} from DISCOM/IntelliSmart API
 
@@ -364,6 +373,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         signOut,
         refreshProfile,
         refreshHome,
+        refreshMeter,
         lookupConsumer,
         completeOnboarding,
     };
