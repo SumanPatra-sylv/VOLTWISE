@@ -15,6 +15,7 @@ import Onboarding from './screens/Onboarding';
 import SmartPlugSetup from './screens/SmartPlugSetup';
 import BillHistory from './screens/BillHistory';
 import Notifications from './screens/Notifications';
+import AdminDashboard from './screens/AdminDashboard';
 
 // ── Types ──────────────────────────────────────────────────────────
 type ViewMode = 'mobile' | 'tablet' | 'web';
@@ -62,6 +63,11 @@ const App: React.FC = () => {
   // Show onboarding if: not logged in OR logged in but hasn't completed onboarding
   if (!user || !profile?.onboarding_done) {
     return <Onboarding />;
+  }
+
+  // Admin users get a separate dashboard
+  if (profile.role === 'admin' || profile.role === 'super_admin') {
+    return <AdminDashboard />;
   }
 
   return (
