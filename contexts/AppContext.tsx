@@ -66,7 +66,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // ── Timeout helper — prevents hanging on unresponsive Supabase ──
 
-    const withTimeout = <T,>(promise: Promise<T>, ms = 8000): Promise<T> =>
+    const withTimeout = <T,>(promise: Promise<T>, ms = 15000): Promise<T> =>
         Promise.race([
             promise,
             new Promise<T>((_, reject) =>
@@ -77,43 +77,68 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // ── Fetch profile → home → meter chain ─────────────────────────
 
     const fetchProfile = useCallback(async (userId: string): Promise<DBProfile | null> => {
-        const { data, error } = await withTimeout(
-            Promise.resolve(supabase.from('profiles').select('*').eq('id', userId).single())
-        );
+        try {
+            const { data, error } = await withTimeout(
+                Promise.resolve(supabase.from('profiles').select('*').eq('id', userId).single())
+            );
 
-        if (error) {
-            if (error.code === 'PGRST116') return null; // no profile yet
-            console.error('Failed to fetch profile:', error.message);
+            if (error) {
+                if ((error as any).code === 'PGRST116') return null; // no profile yet
+                console.error('Failed to fetch profile:', (error as any).message || error);
+                return null;
+            }
+            return data as DBProfile;
+        } catch (err) {
+            console.warn('[Auth] fetchProfile timed out or failed:', err);
             return null;
         }
-        return data as DBProfile;
     }, []);
 
     const fetchPrimaryHome = useCallback(async (userId: string): Promise<DBHome | null> => {
-        const { data, error } = await withTimeout(
-            Promise.resolve(supabase.from('homes').select('*').eq('user_id', userId).eq('is_primary', true).single())
-        );
+        try {
+            const { data, error } = await withTimeout(
+                Promise.resolve(
+                    supabase.from('homes').select('*').eq('user_id', userId).eq('is_primary', true).single()
+                )
+            );
 
-        if (error) {
-            if (error.code === 'PGRST116') return null;
-            console.error('Failed to fetch home:', error.message);
+            if (error) {
+                if ((error as any).code === 'PGRST116') return null;
+                console.error('Failed to fetch home:', (error as any).message || error);
+                return null;
+            }
+            return data as DBHome;
+        } catch (err) {
+            console.warn('[Auth] fetchPrimaryHome timed out or failed:', err);
             return null;
         }
-        return data as DBHome;
     }, []);
 
     const fetchActiveMeter = useCallback(async (homeId: string): Promise<DBMeter | null> => {
-        const { data, error } = await withTimeout(
-            Promise.resolve(supabase.from('meters').select('*').eq('home_id', homeId).eq('is_active', true)
-                .order('created_at', { ascending: false }).limit(1).single())
-        );
+        try {
+            const { data, error } = await withTimeout(
+                Promise.resolve(
+                    supabase
+                        .from('meters')
+                        .select('*')
+                        .eq('home_id', homeId)
+                        .eq('is_active', true)
+                        .order('created_at', { ascending: false })
+                        .limit(1)
+                        .single()
+                )
+            );
 
-        if (error) {
-            if (error.code === 'PGRST116') return null;
-            console.error('Failed to fetch meter:', error.message);
+            if (error) {
+                if ((error as any).code === 'PGRST116') return null;
+                console.error('Failed to fetch meter:', (error as any).message || error);
+                return null;
+            }
+            return data as DBMeter;
+        } catch (err) {
+            console.warn('[Auth] fetchActiveMeter timed out or failed:', err);
             return null;
         }
-        return data as DBMeter;
     }, []);
 
     // ── Load full user data chain ──────────────────────────────────
@@ -256,17 +281,91 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Simulates: GET /consumer/{consumer_id} from DISCOM/IntelliSmart API
 
     const lookupConsumer = async (consumerNumber: string) => {
-        const { data, error } = await supabase
-            .from('consumer_master')
-            .select('*')
-            .eq('consumer_number', consumerNumber)
-            .eq('is_active', true)
-            .single();
-
-        if (error || !data) {
-            return { data: null, error: error?.message || 'Consumer number not found' };
+        // Fast path: built-in demo consumers that work even without Supabase
+        if (consumerNumber === '100100100101') {
+            const demo: DBConsumerMaster = {
+                id: 'demo-sbpdcl',
+                consumer_number: consumerNumber,
+                discom_id: 'demo_sbpdcl',
+                discom_code: 'SBPDCL',
+                state: 'Bihar',
+                meter_number: 'D-SBPDCL-0001',
+                tariff_category: 'residential',
+                connection_type: 'prepaid',
+                registered_name: 'Demo Consumer SBPDCL',
+                registered_phone: null,
+                sanctioned_load_kw: 5,
+                is_active: true,
+                created_at: new Date().toISOString(),
+            };
+            return { data: demo, error: null };
         }
-        return { data: data as DBConsumerMaster, error: null };
+
+        if (consumerNumber === '10010010201') {
+            const demo: DBConsumerMaster = {
+                id: 'demo-mgvcl',
+                consumer_number: consumerNumber,
+                discom_id: 'demo_mgvcl',
+                discom_code: 'MGVCL',
+                state: 'Gujarat',
+                meter_number: 'D-MGVCL-0001',
+                tariff_category: 'residential',
+                connection_type: 'prepaid',
+                registered_name: 'Demo Consumer MGVCL',
+                registered_phone: null,
+                sanctioned_load_kw: 4,
+                is_active: true,
+                created_at: new Date().toISOString(),
+            };
+            return { data: demo, error: null };
+        }
+
+        // Normal path — real Supabase lookup
+        try {
+            const { data, error } = await withTimeout(
+                Promise.resolve(
+                    supabase
+                        .from('consumer_master')
+                        .select('*')
+                        .eq('consumer_number', consumerNumber)
+                        .eq('is_active', true)
+                        .single()
+                )
+            );
+
+            if (error || !data) {
+                const message = (error as any)?.message || String(error || '');
+                const isNetworkIssue =
+                    message.includes('timed out') ||
+                    message.includes('Failed to fetch') ||
+                    message.includes('ERR_CONNECTION') ||
+                    message.includes('NetworkError');
+
+                if (isNetworkIssue) {
+                    console.warn('[Onboarding] lookupConsumer network issue:', message);
+                    return { data: null, error: 'NETWORK_TIMEOUT' };
+                }
+
+                return { data: null, error: message || 'Consumer number not found' };
+            }
+
+            return { data: data as DBConsumerMaster, error: null };
+        } catch (err: any) {
+            const message = err?.message || String(err);
+            const isNetworkIssue =
+                message.includes('timed out') ||
+                message.includes('Failed to fetch') ||
+                message.includes('ERR_CONNECTION') ||
+                message.includes('NetworkError');
+
+            if (isNetworkIssue) {
+                console.warn('[Onboarding] lookupConsumer network error:', message);
+                return { data: null, error: 'NETWORK_TIMEOUT' };
+            }
+
+            console.error('[Onboarding] lookupConsumer unexpected error:', message);
+            return { data: null, error: message };
+        }
     };
 
     // ── Complete onboarding ────────────────────────────────────────
@@ -279,6 +378,77 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             // 1. Lookup consumer in master table
             const { data: consumer, error: lookupErr } = await lookupConsumer(consumerNumber);
             if (lookupErr || !consumer) throw new Error(lookupErr || 'Consumer number not found');
+
+            // ── DEMO MODE: if we matched a built-in demo consumer, avoid Supabase writes ──
+            const isDemoConsumer = consumer.discom_id?.startsWith('demo_');
+            if (isDemoConsumer) {
+                console.log('[Onboarding] Using demo onboarding flow for consumer', consumer.consumer_number);
+
+                // Create an in-memory profile if needed
+                const existingProfile = authState.profile;
+                const demoProfile: DBProfile = existingProfile ?? {
+                    id: authState.user.id,
+                    role: 'consumer',
+                    name: authState.user.email || 'Demo User',
+                    phone: null,
+                    consumer_number: consumerNumber,
+                    avatar_url: null,
+                    location: consumer.state,
+                    household_members: 3,
+                    onboarding_done: true,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                };
+
+                demoProfile.consumer_number = consumerNumber;
+                demoProfile.location = consumer.state;
+                demoProfile.onboarding_done = true;
+                demoProfile.updated_at = new Date().toISOString();
+
+                const demoHome: DBHome = {
+                    id: 'demo-home',
+                    user_id: authState.user.id,
+                    name: 'My Demo Home',
+                    address: null,
+                    city: null,
+                    state: consumer.state,
+                    pincode: null,
+                    feeder_id: null,
+                    area: null,
+                    tariff_category: consumer.tariff_category,
+                    tariff_plan_id: null,
+                    discom_id: consumer.discom_id,
+                    sanctioned_load_kw: consumer.sanctioned_load_kw,
+                    is_primary: true,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                };
+
+                const demoMeter: DBMeter = {
+                    id: 'demo-meter',
+                    home_id: demoHome.id,
+                    meter_number: consumer.meter_number,
+                    meter_type: consumer.connection_type,
+                    manufacturer: null,
+                    installation_date: new Date().toISOString(),
+                    is_active: true,
+                    last_reading_at: null,
+                    balance_amount: 0,
+                    last_recharge_amount: 0,
+                    last_recharge_date: null,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                };
+
+                setAuthState(prev => ({
+                    ...prev,
+                    profile: demoProfile,
+                    home: demoHome,
+                    meter: demoMeter,
+                }));
+
+                return { error: null };
+            }
 
             // 2. Find active tariff plan for this DISCOM
             const { data: tariffPlan, error: tariffErr } = await supabase
