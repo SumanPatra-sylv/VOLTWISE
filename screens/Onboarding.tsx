@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Zap, ChevronRight, ChevronLeft, Loader2, Eye, EyeOff, AlertCircle, CheckCircle2, Search } from 'lucide-react';
+import { Zap, ChevronRight, ChevronLeft, Loader2, Eye, EyeOff, AlertCircle, CheckCircle2, Search, Shield } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { DBConsumerMaster } from '../types/database';
 
 // ── Types ───────────────────────────────────────────────────────────
 
-type OnboardingStep = 'welcome' | 'signup' | 'login' | 'consumer' | 'done';
+type OnboardingStep = 'welcome' | 'signup' | 'login' | 'admin-login' | 'consumer' | 'done';
 
 const Onboarding: React.FC = () => {
   const { user, profile, signUp, signIn, lookupConsumer, completeOnboarding } = useApp();
@@ -38,9 +38,15 @@ const Onboarding: React.FC = () => {
   const [loading, setLoading] = useState(false);
 
   // ── If user is logged in but not onboarded, jump to consumer ───
+  // ── Skip for admin users — they don't need consumer linking ────
   useEffect(() => {
-    if (user && (step === 'welcome' || step === 'signup' || step === 'login')) {
-      // User is authenticated — if onboarding not done (or profile missing), go to consumer step
+    if (user && (step === 'welcome' || step === 'signup' || step === 'login' || step === 'admin-login')) {
+      // Admin users: App.tsx will handle routing to AdminDashboard
+      if (profile?.role === 'admin' || profile?.role === 'super_admin') {
+        // Profile loaded, admin detected — App.tsx will redirect
+        return;
+      }
+      // Regular users: if onboarding not done (or profile missing), go to consumer step
       if (!profile || !profile.onboarding_done) {
         setStep('consumer');
         setLoading(false);
@@ -88,6 +94,27 @@ const Onboarding: React.FC = () => {
 
     setLoading(false);
     // Auth listener handles the rest — if onboarding not done, useEffect jumps to consumer
+  };
+
+  // ── Handle admin login ─────────────────────────────────────────
+  const handleAdminLogin = async () => {
+    if (!email.trim()) return setError('Email is required');
+    if (!password) return setError('Password is required');
+
+    setLoading(true);
+    setError('');
+
+    const { data, error } = await signIn(email, password);
+
+    if (error) {
+      setError(error.message || 'Login failed');
+      setLoading(false);
+      return;
+    }
+
+    // Check if user has admin role - profile will be loaded by the auth listener
+    // The App.tsx will handle routing to AdminDashboard based on role
+    setLoading(false);
   };
 
   // ── Lookup consumer number ─────────────────────────────────────
@@ -188,6 +215,15 @@ const Onboarding: React.FC = () => {
                   className="w-full py-4 bg-white text-slate-700 rounded-2xl font-semibold text-lg border border-slate-200 hover:bg-slate-50 transition-colors"
                 >
                   I have an account
+                </button>
+                
+                {/* Admin Login Link */}
+                <button
+                  onClick={() => { setStep('admin-login'); setError(''); }}
+                  className="mt-6 flex items-center justify-center gap-2 text-slate-400 hover:text-slate-600 text-sm font-medium transition-colors"
+                >
+                  <Shield className="w-4 h-4" />
+                  Login as Admin
                 </button>
               </div>
             )}
@@ -312,6 +348,67 @@ const Onboarding: React.FC = () => {
                 <p className="text-center text-sm text-slate-500 mt-4">
                   Don't have an account?{' '}
                   <button onClick={() => { setStep('signup'); setError(''); }} className="text-cyan-600 font-medium hover:underline">Create one</button>
+                </p>
+              </div>
+            )}
+
+            {/* ── ADMIN LOGIN ──────────────────────────────────── */}
+            {step === 'admin-login' && (
+              <div className="flex-1 flex flex-col">
+                <button onClick={() => setStep('welcome')} className="flex items-center text-slate-500 mb-6 hover:text-slate-700">
+                  <ChevronLeft className="w-5 h-5" /> Back
+                </button>
+                
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center">
+                    <Shield className="w-6 h-6 text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900">Admin Login</h2>
+                    <p className="text-slate-500 text-sm">Restricted access only</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-sm font-medium text-slate-600 mb-1 block">Admin Email</label>
+                    <input
+                      type="email" value={email} onChange={e => setEmail(e.target.value)}
+                      placeholder="admin@voltwise.com"
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-slate-600 mb-1 block">Password</label>
+                    <div className="relative">
+                      <input
+                        type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)}
+                        placeholder="Enter admin password"
+                        className={`${inputClass} pr-12`}
+                      />
+                      <button onClick={() => setShowPassword(!showPassword)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600" type="button">
+                        {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {error && (
+                  <div className="mt-4 flex items-center gap-2 text-red-600 text-sm bg-red-50 px-4 py-3 rounded-xl">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" /> {error}
+                  </div>
+                )}
+
+                <button
+                  onClick={handleAdminLogin}
+                  disabled={loading}
+                  className="mt-6 w-full py-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-2xl font-semibold text-lg hover:from-purple-700 hover:to-indigo-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-purple-200"
+                >
+                  {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Shield className="w-5 h-5" /><span>Access Admin Panel</span></>}
+                </button>
+
+                <p className="text-center text-xs text-slate-400 mt-4">
+                  Only authorized administrators can access this area.
                 </p>
               </div>
             )}
