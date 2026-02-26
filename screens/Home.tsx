@@ -11,6 +11,8 @@ import { getDashboardStats, DashboardStats } from '../services/api';
 import { useApi } from '../hooks/useApi';
 import { supabase } from '../services/supabase';
 import { DBAppliance } from '../types/database';
+import { calculateOptimizationAlert, fetchUserTariffSlots } from '../utils/tariffOptimizer';
+import { DBTariffSlot } from '../types/database';
 
 type ViewMode = 'mobile' | 'tablet' | 'web';
 
@@ -138,8 +140,8 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                 id: db.id,
                 name: db.name || db.category,
                 icon: CATEGORY_ICONS[db.category] || 'zap',
-                status: db.status === 'ON' ? ApplianceStatus.ON : 
-                        db.status === 'WARNING' ? ApplianceStatus.WARNING :
+                status: db.status === 'ON' ? ApplianceStatus.ON :
+                    db.status === 'WARNING' ? ApplianceStatus.WARNING :
                         db.status === 'SCHEDULED' ? ApplianceStatus.SCHEDULED : ApplianceStatus.OFF,
                 power: db.rated_power_w,
                 costPerHour: (db.rated_power_w / 1000) * currentTariff,
@@ -156,10 +158,29 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
         fetchAppliances();
     }, [fetchAppliances]);
 
+    // Fetch tariff slots for optimization alert
+    const [tariffSlots, setTariffSlots] = useState<DBTariffSlot[]>([]);
+    useEffect(() => {
+        if (home?.id) { fetchUserTariffSlots(home.id).then(setTariffSlots); }
+    }, [home?.id]);
+
+    // Real optimization alert (fetched separately with raw DB data)
+    const [optAlert, setOptAlert] = useState<{ count: number; savings: number } | null>(null);
+    useEffect(() => {
+        if (!home?.id || tariffSlots.length === 0) return;
+        supabase.from('appliances').select('*').eq('home_id', home.id).eq('is_active', true)
+            .then(({ data }) => {
+                if (data) {
+                    const alert = calculateOptimizationAlert(data as DBAppliance[], tariffSlots, new Date().getHours());
+                    setOptAlert({ count: alert.heavyAppliancesOn.length, savings: alert.totalSavingsPerHour });
+                }
+            });
+    }, [home?.id, tariffSlots, appliances]);
+
     // Real-time subscription to sync appliance status with Control Center
     useEffect(() => {
         if (!home?.id) return;
-        
+
         const channel = supabase
             .channel('home-appliances')
             .on(
@@ -176,7 +197,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                 }
             )
             .subscribe();
-        
+
         return () => {
             supabase.removeChannel(channel);
         };
@@ -187,13 +208,13 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
         try {
             const { error } = await supabase
                 .from('appliances')
-                .update({ 
+                .update({
                     status: newStatus ? 'ON' : 'OFF',
-                    updated_at: new Date().toISOString() 
+                    updated_at: new Date().toISOString()
                 })
                 .eq('id', applianceId);
             if (error) throw error;
-            
+
             // Log the action
             await supabase.from('control_logs').insert({
                 appliance_id: applianceId,
@@ -275,7 +296,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
 
                     {/* Action Buttons: Recharge + View Bill */}
                     <div className={`w-full flex gap-3 z-20 ${isCompact ? 'mt-3' : 'mt-6'}`}>
-                        <button 
+                        <button
                             onClick={() => setShowRechargeModal(true)}
                             className={`flex-1 bg-slate-900 text-white font-bold rounded-xl shadow-lg shadow-slate-200 active:scale-95 transition-transform flex items-center justify-center gap-2 ${isCompact ? 'py-2 text-xs' : 'py-3 text-base'}`}
                         >
@@ -355,7 +376,10 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                                     {s.currentSlotType === 'peak' ? 'Peak Hours Active' : s.currentSlotType === 'off-peak' ? 'Off-Peak — Save Now!' : 'Normal Tariff Hours'}
                                 </h3>
                                 <p className={`text-slate-500 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>
-                                    Next: {s.nextSlotType} at {s.nextSlotChange} (₹{s.nextSlotRate.toFixed(2)}/kWh)
+                                    {s.currentSlotType === 'peak' && optAlert && optAlert.count > 0
+                                        ? `${optAlert.count} heavy appliance${optAlert.count > 1 ? 's' : ''} • Save ₹${optAlert.savings.toFixed(2)}/hr`
+                                        : `Next: ${s.nextSlotType} at ${s.nextSlotChange} (₹${s.nextSlotRate.toFixed(2)}/kWh)`
+                                    }
                                 </p>
                             </div>
                         </div>
@@ -434,9 +458,9 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ delay: isCompact ? 0 : 0.1 * idx }}
                             >
-                                <ApplianceCard 
-                                    data={appliance} 
-                                    compact={isCompact} 
+                                <ApplianceCard
+                                    data={appliance}
+                                    compact={isCompact}
                                     onToggle={handleApplianceToggle}
                                 />
                             </motion.div>

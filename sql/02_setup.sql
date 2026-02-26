@@ -17,6 +17,7 @@ CREATE TYPE tariff_category  AS ENUM ('residential', 'commercial', 'industrial',
 CREATE TYPE appliance_status AS ENUM ('ON', 'OFF', 'SCHEDULED', 'WARNING');
 CREATE TYPE appliance_source AS ENUM ('nilm', 'smart_plug', 'manual');
 CREATE TYPE appliance_category AS ENUM ('ac', 'geyser', 'refrigerator', 'washing_machine', 'fan', 'tv', 'lighting', 'other');
+CREATE TYPE optimization_tier  AS ENUM ('tier_1_shiftable', 'tier_2_prep_needed', 'tier_3_comfort', 'tier_4_essential');
 CREATE TYPE plug_status      AS ENUM ('online', 'offline', 'pairing');
 CREATE TYPE schedule_repeat  AS ENUM ('once', 'daily', 'weekdays', 'weekends', 'custom');
 CREATE TYPE bill_status      AS ENUM ('generated', 'paid', 'overdue', 'partial');
@@ -181,7 +182,9 @@ CREATE TABLE appliances (
     icon                TEXT NOT NULL DEFAULT 'zap',
     source              appliance_source DEFAULT 'manual',
     category            appliance_category DEFAULT 'other',
+    optimization_tier   optimization_tier DEFAULT 'tier_4_essential',
     is_controllable     BOOLEAN DEFAULT TRUE,
+    eco_mode_enabled    BOOLEAN DEFAULT FALSE,
     rated_power_w       INT,
     current_power_w     NUMERIC(8,2) DEFAULT 0,
     status              appliance_status DEFAULT 'OFF',

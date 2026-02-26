@@ -10,7 +10,7 @@ import Insights from './screens/Insights';
 import Rewards from './screens/Rewards';
 import Control from './screens/Control';
 import Profile from './screens/Profile';
-import TariffOptimizer from './screens/TariffOptimizer';
+import Optimizer from './screens/Optimizer';
 import Onboarding from './screens/Onboarding';
 import SmartPlugSetup from './screens/SmartPlugSetup';
 import BillHistory from './screens/BillHistory';
@@ -33,7 +33,7 @@ const SplashScreen: React.FC = () => (
 // ── Route Wrappers (for sub-pages that need navigate back) ─────────
 const OptimizerRoute: React.FC<{ viewMode: ViewMode }> = ({ viewMode }) => {
   const navigate = useNavigate();
-  return <TariffOptimizer onBack={() => navigate('/')} />;
+  return <Optimizer onBack={() => navigate('/')} viewMode={viewMode} />;
 };
 
 const SmartPlugRoute: React.FC<{ viewMode: ViewMode }> = ({ viewMode }) => {
@@ -102,7 +102,7 @@ const App: React.FC = () => {
         )}
 
         {/* Main Content Area */}
-        <main className="flex-1 relative z-10 overflow-hidden">
+        <main className="flex-1 relative overflow-hidden">
           <ErrorBoundary>
             <Routes>
               <Route path="/" element={<HomeWithNav viewMode={viewMode} />} />

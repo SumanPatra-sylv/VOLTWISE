@@ -104,7 +104,7 @@ const Onboarding: React.FC = () => {
     setLoading(true);
     setError('');
 
-    const { data, error } = await signIn(email, password);
+    const { error } = await signIn(email, password);
 
     if (error) {
       setError(error.message || 'Login failed');
@@ -216,7 +216,7 @@ const Onboarding: React.FC = () => {
                 >
                   I have an account
                 </button>
-                
+
                 {/* Admin Login Link */}
                 <button
                   onClick={() => { setStep('admin-login'); setError(''); }}
@@ -358,7 +358,7 @@ const Onboarding: React.FC = () => {
                 <button onClick={() => setStep('welcome')} className="flex items-center text-slate-500 mb-6 hover:text-slate-700">
                   <ChevronLeft className="w-5 h-5" /> Back
                 </button>
-                
+
                 <div className="flex items-center gap-3 mb-6">
                   <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center">
                     <Shield className="w-6 h-6 text-white" />

@@ -131,6 +131,7 @@ export interface DBBill {
 }
 
 export type ApplianceCategory = 'ac' | 'geyser' | 'refrigerator' | 'washing_machine' | 'fan' | 'tv' | 'lighting' | 'other';
+export type OptimizationTier = 'tier_1_shiftable' | 'tier_2_prep_needed' | 'tier_3_comfort' | 'tier_4_essential';
 
 export interface DBAppliance {
     id: string;
@@ -139,7 +140,9 @@ export interface DBAppliance {
     icon: string;
     source: 'nilm' | 'smart_plug' | 'manual';
     category: ApplianceCategory;
+    optimization_tier: OptimizationTier;
     is_controllable: boolean;
+    eco_mode_enabled: boolean;
     status: 'ON' | 'OFF' | 'SCHEDULED' | 'WARNING';
     rated_power_w: number;
     current_power_w: number | null;

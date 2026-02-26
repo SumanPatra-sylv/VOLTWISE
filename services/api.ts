@@ -148,111 +148,163 @@ const REGIONAL_AVERAGE_KWH = 250;
 const CARBON_EMISSION_FACTOR = 0.85; // kg CO2 per kWh (Indian grid)
 const CO2_PER_TREE_PER_MONTH = 1.75; // kg CO2
 
-export async function getCarbonStatsRealData(homeId: string): Promise<CarbonStatsData | null> {
-    if (!homeId) {
-        console.warn('[API] getCarbonStatsRealData: no homeId provided');
-        return null;
-    }
+// ── Emission & Tariff Constants ────────────────────────────────────
+// Emission factors by ToD slot type (India grid — fossil mix varies by time)
+const EMISSION_FACTORS = {
+    peak: 0.90,       // kg CO₂/kWh during peak (more thermal plants online)
+    normal: 0.82,     // kg CO₂/kWh during normal hours
+    offPeak: 0.75,    // kg CO₂/kWh during off-peak (higher renewables share)
+    blended: 0.85,    // India grid average
+};
+
+// SBPDCL tariff rates (from seed: 04_seed_tariffs.sql)
+const SBPDCL_RATES = {
+    peak: 9.55,       // ₹/kWh (highest_slab_rate × 1.20)
+    normal: 7.42,     // ₹/kWh (lowest_slab_rate × 1.00)
+    offPeak: 6.31,    // ₹/kWh (lowest_slab_rate × 0.85)
+};
+
+// ── Carbon Dashboard (Comprehensive) ──────────────────────────────
+
+export interface CarbonDashboardData {
+    totalEmittedKg: number;           // SUM(carbon_kg) this month from daily_aggregates (DB)
+    monthlyKwh: number;               // SUM(total_kwh) this month from daily_aggregates (DB)
+    monthChangePercent: number;       // (thisMonth - lastMonth) / lastMonth * 100 (DB)
+    perCapitaKg: number;              // totalEmittedKg / household_members (DB)
+    householdMembers: number;         // from homes table (DB)
+    co2ReducedViaShiftKg: number;     // calculated from monthSavings (DB)
+    kwhShifted: number;               // monthSavings / rate_diff (DB)
+    withoutOptimizationKg: number;    // kwhShifted × peak emission factor
+    withOptimizationKg: number;       // kwhShifted × off-peak emission factor
+    co2AvoidedKg: number;             // difference
+    monthSavings: number;             // from DB (get_dashboard_stats RPC)
+    trendData: { date: string; carbonKg: number; kwh: number }[];  // daily data from daily_aggregates (DB)
+}
+
+export async function getCarbonDashboard(homeId: string): Promise<CarbonDashboardData | null> {
+    if (!homeId) return null;
 
     try {
-        console.log('[API] getCarbonStatsRealData: START fetching for homeId:', homeId);
-        
-        // Get dashboard stats which includes monthlyUsage (currentMonthKwh)
-        let dashboardStats;
+        const stats = await getDashboardStats(homeId);
+        if (!stats) return null;
+
+        // Fetch household_members from homes table
+        let householdMembers = 4;
         try {
-            dashboardStats = await getDashboardStats(homeId);
-            console.log('[API] getDashboardStats returned:', dashboardStats);
-        } catch (statsError) {
-            console.error('[API] Error calling getDashboardStats:', statsError);
-            // Use fallback values if RPC fails
-            dashboardStats = {
-                dailyAvgUsage: 5.4, // ~162 kWh/month (250/30 * 0.6 = reasonable estimate)
-                monthBill: 0,
-                balance: 0,
-                lastRechargeAmount: 0,
-                lastRechargeDate: '',
-                balancePercent: 0,
-                currentTariff: 0,
-                yearAverage: 0,
-                currentLoad: 0,
-                todayCost: 0,
-                todayKwh: 0,
-                monthSavings: 0,
-                activeDevices: 0,
-                currentSlotType: 'normal' as const,
-                currentSlotRate: 0,
-                nextSlotChange: '',
-                nextSlotType: 'normal' as const,
-                nextSlotRate: 0,
-            };
-            console.warn('[API] Using fallback dashboard stats');
-        }
-        
-        if (!dashboardStats) {
-            console.warn('[API] getCarbonStatsRealData: dashboardStats is null');
-            return null;
-        }
+            const { data: homeData } = await supabase
+                .from('homes')
+                .select('household_members')
+                .eq('id', homeId)
+                .single();
+            if (homeData?.household_members) {
+                householdMembers = homeData.household_members;
+            }
+        } catch { /* use default */ }
 
-        // Calculate user's current month consumption
-        const userConsumption = Math.max(1, dashboardStats.dailyAvgUsage * 30); // monthly estimate, min 1 kWh
-        
-        console.log('[API] userConsumption calculated:', userConsumption);
-        
-        // Regional averages (can be fetched from DB or use defaults)
-        const neighborAverage = 180; 
-        const nationalAverage = REGIONAL_AVERAGE_KWH;
+        // ── Fetch REAL daily data from daily_aggregates (last 30 days) ──
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
 
-        // Calculate CO2 avoided (difference from regional average)
-        const co2Avoided = (nationalAverage - userConsumption) * CARBON_EMISSION_FACTOR;
-        
-        // Calculate trees saved (per year)
-        // Monthly trees = CO2 Avoided / 1.75
-        // Yearly trees = (CO2 Avoided / 1.75) / 12
-        const treesSavedPerMonth = Math.abs(co2Avoided) / CO2_PER_TREE_PER_MONTH;
-        const treesSavedPerYear = Math.floor(treesSavedPerMonth / 12);
+        const { data: dailyRows } = await supabase
+            .from('daily_aggregates')
+            .select('date, total_kwh, carbon_kg')
+            .eq('home_id', homeId)
+            .is('appliance_id', null)         // whole-home aggregates only
+            .gte('date', thirtyDaysAgoStr)
+            .order('date', { ascending: true });
 
-        const result = {
-            user: Math.round(userConsumption),
-            neighbors: neighborAverage,
-            national: nationalAverage,
-            trees: Math.max(0, treesSavedPerYear),
-            co2Saved: Math.max(0, Math.round(co2Avoided))
+        // Build trend data from real DB rows
+        const trendData = (dailyRows || []).map(row => ({
+            date: new Date(row.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            carbonKg: Math.round(Number(row.carbon_kg || 0) * 100) / 100,
+            kwh: Math.round(Number(row.total_kwh || 0) * 100) / 100,
+        }));
+
+        // ── This month's totals from REAL DB data ──
+        const firstOfMonth = new Date();
+        firstOfMonth.setDate(1);
+        const firstOfMonthStr = firstOfMonth.toISOString().split('T')[0];
+
+        const thisMonthRows = (dailyRows || []).filter(r => r.date >= firstOfMonthStr);
+        const monthlyKwh = thisMonthRows.reduce((sum, r) => sum + Number(r.total_kwh || 0), 0);
+        const totalEmittedKg = Math.round(
+            thisMonthRows.reduce((sum, r) => sum + Number(r.carbon_kg || 0), 0)
+        );
+
+        // ── Last month's total for comparison ──
+        const lastMonthStart = new Date(firstOfMonth);
+        lastMonthStart.setMonth(lastMonthStart.getMonth() - 1);
+        const lastMonthEnd = new Date(firstOfMonth);
+        lastMonthEnd.setDate(lastMonthEnd.getDate() - 1);
+
+        const { data: lastMonthRows } = await supabase
+            .from('daily_aggregates')
+            .select('carbon_kg')
+            .eq('home_id', homeId)
+            .is('appliance_id', null)
+            .gte('date', lastMonthStart.toISOString().split('T')[0])
+            .lte('date', lastMonthEnd.toISOString().split('T')[0]);
+
+        const lastMonthTotal = (lastMonthRows || []).reduce((sum, r) => sum + Number(r.carbon_kg || 0), 0);
+        const monthChangePercent = lastMonthTotal > 0
+            ? Math.round(((totalEmittedKg - lastMonthTotal) / lastMonthTotal) * 100 * 10) / 10
+            : 0;
+
+        const perCapitaKg = Math.round((totalEmittedKg / householdMembers) * 10) / 10;
+
+        // Optimization comparison (from monthSavings ₹ — real DB value)
+        const monthSavings = stats.monthSavings || 0;
+        const rateDiff = SBPDCL_RATES.peak - SBPDCL_RATES.offPeak; // 3.24 ₹/kWh
+        const kwhShifted = rateDiff > 0 ? Math.round((monthSavings / rateDiff) * 10) / 10 : 0;
+        const withoutOptimizationKg = Math.round(kwhShifted * EMISSION_FACTORS.peak * 100) / 100;
+        const withOptimizationKg = Math.round(kwhShifted * EMISSION_FACTORS.offPeak * 100) / 100;
+        const co2AvoidedKg = Math.round((withoutOptimizationKg - withOptimizationKg) * 100) / 100;
+
+        return {
+            totalEmittedKg, monthlyKwh: Math.round(monthlyKwh), monthChangePercent,
+            perCapitaKg, householdMembers, co2ReducedViaShiftKg: co2AvoidedKg,
+            kwhShifted, withoutOptimizationKg, withOptimizationKg, co2AvoidedKg,
+            monthSavings, trendData,
         };
-
-        console.log('[API] getCarbonStatsRealData: FINAL RESULT:', result);
-        return result;
     } catch (error) {
-        console.error('[API] getCarbonStatsRealData CATCH error:', error);
+        console.error('[API] getCarbonDashboard error:', error);
         return null;
     }
 }
 
-// ── Carbon Impact (Real Data) ──────────────────────────────────────
+// ── Legacy carbon functions (kept for compatibility) ───────────────
+
+export async function getCarbonStatsRealData(homeId: string): Promise<CarbonStatsData | null> {
+    if (!homeId) return null;
+    try {
+        const stats = await getDashboardStats(homeId);
+        if (!stats) return null;
+        const userConsumption = Math.max(1, stats.dailyAvgUsage * 30);
+        const co2Avoided = (REGIONAL_AVERAGE_KWH - userConsumption) * CARBON_EMISSION_FACTOR;
+        const treesSavedPerMonth = Math.abs(co2Avoided) / CO2_PER_TREE_PER_MONTH;
+        return {
+            user: Math.round(userConsumption),
+            neighbors: 180,
+            national: REGIONAL_AVERAGE_KWH,
+            trees: Math.max(0, Math.floor(treesSavedPerMonth / 12)),
+            co2Saved: Math.max(0, Math.round(co2Avoided)),
+        };
+    } catch { return null; }
+}
 
 export async function getCarbonImpactData(homeId: string): Promise<CarbonImpactData | null> {
-    if (!homeId) {
-        console.warn('[API] getCarbonImpactData: no homeId provided');
-        return null;
-    }
-
+    if (!homeId) return null;
     try {
-        console.log('[API] getCarbonImpactData: fetching for homeId:', homeId);
-        
-        // TODO: Replace with actual API call when backend is ready
-        // For now, return mock data with realistic values
-        const carbonImpactData: CarbonImpactData = {
-            last_month_change: -8, // 8% lower
-            tariff_reduced_kg: 12,
-            household_members: 4,
-            current_xp: 70 // 0-100 scale for level progress
+        const dashboard = await getCarbonDashboard(homeId);
+        if (!dashboard) return null;
+        return {
+            last_month_change: dashboard.monthChangePercent,
+            tariff_reduced_kg: dashboard.co2ReducedViaShiftKg,
+            household_members: dashboard.householdMembers,
+            current_xp: 70,
         };
-
-        console.log('[API] getCarbonImpactData result:', carbonImpactData);
-        return carbonImpactData;
-    } catch (error) {
-        console.error('[API] getCarbonImpactData error:', error);
-        return null;
-    }
+    } catch { return null; }
 }
 
 // ── Tariff ─────────────────────────────────────────────────────────

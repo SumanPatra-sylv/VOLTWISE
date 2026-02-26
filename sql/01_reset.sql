@@ -46,6 +46,7 @@ DROP TYPE IF EXISTS tariff_category CASCADE;
 DROP TYPE IF EXISTS appliance_status CASCADE;
 DROP TYPE IF EXISTS appliance_source CASCADE;
 DROP TYPE IF EXISTS appliance_category CASCADE;
+DROP TYPE IF EXISTS optimization_tier CASCADE;
 DROP TYPE IF EXISTS plug_status CASCADE;
 DROP TYPE IF EXISTS schedule_repeat CASCADE;
 DROP TYPE IF EXISTS bill_status CASCADE;
