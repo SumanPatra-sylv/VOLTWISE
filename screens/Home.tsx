@@ -11,6 +11,7 @@ import { getDashboardStats, DashboardStats } from '../services/api';
 import { useApi } from '../hooks/useApi';
 import { supabase } from '../services/supabase';
 import { DBAppliance } from '../types/database';
+import { toggleAppliance as apiToggle } from '../services/backend';
 import { calculateOptimizationAlert, fetchUserTariffSlots } from '../utils/tariffOptimizer';
 import { DBTariffSlot } from '../types/database';
 
@@ -198,7 +199,11 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
             )
             .subscribe();
 
+        // Polling fallback: refresh every 5s
+        const poll = setInterval(fetchAppliances, 5_000);
+
         return () => {
+            clearInterval(poll);
             supabase.removeChannel(channel);
         };
     }, [home?.id, fetchAppliances]);
@@ -206,23 +211,8 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
     // Toggle appliance status (syncs with Control Center via realtime)
     const handleApplianceToggle = useCallback(async (applianceId: string, newStatus: boolean) => {
         try {
-            const { error } = await supabase
-                .from('appliances')
-                .update({
-                    status: newStatus ? 'ON' : 'OFF',
-                    updated_at: new Date().toISOString()
-                })
-                .eq('id', applianceId);
-            if (error) throw error;
-
-            // Log the action
-            await supabase.from('control_logs').insert({
-                appliance_id: applianceId,
-                user_id: (await supabase.auth.getUser()).data.user?.id,
-                action: newStatus ? 'turn_on' : 'turn_off',
-                trigger_source: 'manual',
-                result: 'success'
-            });
+            const action = newStatus ? 'turn_on' : 'turn_off';
+            await apiToggle(applianceId, action);
         } catch (err) {
             console.error('Failed to toggle appliance:', err);
         }

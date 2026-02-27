@@ -27,11 +27,18 @@ ALTER TABLE IF EXISTS control_logs DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS automation_rules DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS admin_audit_logs DISABLE ROW LEVEL SECURITY;
 
--- Also grant access to authenticated and anon roles
+-- Also grant access to authenticated, anon, and service_role
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO service_role;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO service_role;
+
+-- Ensure future tables/sequences also get grants
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO service_role;
 
 -- Verify
 SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;

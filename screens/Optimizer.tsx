@@ -11,7 +11,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ArrowLeft, Power, PowerOff, Zap, Leaf, Calendar, ChevronRight, Loader2, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Power, PowerOff, Zap, Leaf, Calendar, ChevronRight, Loader2, AlertTriangle, PlayCircle, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useApp } from '../contexts/AppContext';
 import { supabase } from '../services/supabase';
@@ -25,6 +25,8 @@ import {
     OptimizationAlert,
 } from '../utils/tariffOptimizer';
 import InterceptorModal from '../components/InterceptorModal';
+import ScheduleModal from '../components/ScheduleModal';
+import { toggleAppliance as apiToggle, setEcoMode as apiEcoMode, batchTurnOff as apiBatchTurnOff } from '../services/backend';
 
 type ViewMode = 'mobile' | 'tablet' | 'web';
 
@@ -69,8 +71,10 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
     // Action sheet state
     const [actionSheetAppliance, setActionSheetAppliance] = useState<DBAppliance | null>(null);
 
-    // InterceptorModal state
+    // InterceptorModal state (peak only)
     const [interceptAppliance, setInterceptAppliance] = useState<DBAppliance | null>(null);
+    // ScheduleModal state (off-peak direct scheduling)
+    const [scheduleAppliance, setScheduleAppliance] = useState<DBAppliance | null>(null);
 
     const currentHour = new Date().getHours();
 
@@ -123,19 +127,7 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
     const handleTurnOff = async (applianceId: string) => {
         setActionLoadingId(applianceId);
         try {
-            await supabase
-                .from('appliances')
-                .update({ status: 'OFF', updated_at: new Date().toISOString() })
-                .eq('id', applianceId);
-
-            await supabase.from('control_logs').insert({
-                appliance_id: applianceId,
-                user_id: (await supabase.auth.getUser()).data.user?.id,
-                action: 'turn_off',
-                trigger_source: 'optimizer',
-                result: 'success',
-            });
-
+            await apiToggle(applianceId, 'turn_off');
             setActionSheetAppliance(null);
             fetchData();
         } catch (err) {
@@ -149,21 +141,7 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
         setTurningOffAll(true);
         try {
             const ids = alert.heavyAppliancesOn.map(a => a.id);
-            await supabase
-                .from('appliances')
-                .update({ status: 'OFF', updated_at: new Date().toISOString() })
-                .in('id', ids);
-
-            const userId = (await supabase.auth.getUser()).data.user?.id;
-            const logs = ids.map(id => ({
-                appliance_id: id,
-                user_id: userId,
-                action: 'turn_off',
-                trigger_source: 'optimizer_batch',
-                result: 'success',
-            }));
-            await supabase.from('control_logs').insert(logs);
-
+            await apiBatchTurnOff(ids);
             fetchData();
         } catch (err) {
             console.error('Failed to turn off all:', err);
@@ -175,23 +153,24 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
     const handleEcoMode = async (applianceId: string) => {
         setActionLoadingId(applianceId);
         try {
-            await supabase
-                .from('appliances')
-                .update({ eco_mode_enabled: true, updated_at: new Date().toISOString() })
-                .eq('id', applianceId);
-
-            await supabase.from('control_logs').insert({
-                appliance_id: applianceId,
-                user_id: (await supabase.auth.getUser()).data.user?.id,
-                action: 'eco_mode_on',
-                trigger_source: 'optimizer',
-                result: 'success',
-            });
-
+            await apiEcoMode(applianceId, true);
             setActionSheetAppliance(null);
             fetchData();
         } catch (err) {
             console.error('Failed to enable eco mode:', err);
+        } finally {
+            setActionLoadingId(null);
+        }
+    };
+
+    const handleTurnOn = async (applianceId: string) => {
+        setActionLoadingId(applianceId);
+        try {
+            await apiToggle(applianceId, 'turn_on');
+            setActionSheetAppliance(null);
+            fetchData();
+        } catch (err) {
+            console.error('Failed to turn on:', err);
         } finally {
             setActionLoadingId(null);
         }
@@ -209,11 +188,12 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
 
     const currentSlot = getSlotForHour(currentHour, slots);
     const hasHeavyAppliances = alert.heavyAppliancesOn.length > 0;
+    const isOffPeak = alert.currentSlotType === 'off-peak';
 
     return (
         <div className="pb-32 overflow-y-auto h-full no-scrollbar">
             {/* Header */}
-            <div className={`px-5 pt-10 pb-6 ${alert.isCurrentlyPeak ? 'bg-gradient-to-b from-rose-50 to-white' : 'bg-gradient-to-b from-emerald-50 to-white'}`}>
+            <div className={`px-5 pt-10 pb-6 ${alert.isCurrentlyPeak ? 'bg-gradient-to-b from-rose-50 to-white' : isOffPeak ? 'bg-gradient-to-b from-emerald-50 to-white' : 'bg-gradient-to-b from-slate-50 to-white'}`}>
                 <div className="flex items-center gap-3 mb-4">
                     {onBack && (
                         <button onClick={onBack} className="p-2 rounded-xl bg-white/80 border border-slate-100 hover:bg-slate-50 transition-colors">
@@ -222,7 +202,7 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
                     )}
                     <div>
                         <h1 className="text-xl font-bold text-slate-800">
-                            {alert.isCurrentlyPeak ? '⚡ Peak Tariff Active' : '✅ Off-Peak / Normal'}
+                            {alert.isCurrentlyPeak ? '⚡ Peak Tariff Active' : isOffPeak ? '✅ Off-Peak' : '📊 Normal Tariff'}
                         </h1>
                         <p className="text-sm text-slate-500">
                             Current rate: ₹{alert.currentRate.toFixed(2)}/kWh ({currentSlot?.slot_type || '—'})
@@ -264,12 +244,12 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
                             <p className="text-xs text-slate-400 mt-1">You're saving money by not running heavy loads now</p>
                         </div>
                     )
-                ) : (
-                    // OFF-PEAK / NORMAL: encourage running heavy appliances
+                ) : isOffPeak ? (
+                    // OFF-PEAK: encourage running heavy appliances
                     hasHeavyAppliances ? (
                         <div className="bg-white p-4 rounded-2xl shadow-soft border border-emerald-100 text-center">
-                            <p className="text-sm font-semibold text-emerald-600">✅ Smart! Running heavy appliances at {currentSlot?.slot_type} rate</p>
-                            <p className="text-xs text-slate-400 mt-1">₹{alert.currentRate.toFixed(2)}/kWh — this is a great time to run loads</p>
+                            <p className="text-sm font-semibold text-emerald-600">✅ Smart! Running heavy appliances at off-peak rate</p>
+                            <p className="text-xs text-slate-400 mt-1">₹{alert.currentRate.toFixed(2)}/kWh — this is the cheapest time to run loads</p>
                         </div>
                     ) : (
                         <div className="bg-white p-4 rounded-2xl shadow-soft border border-amber-100 text-center">
@@ -277,6 +257,12 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
                             <p className="text-xs text-slate-400 mt-1">Turn on your washing machine, EV charger, geyser etc. now at ₹{alert.currentRate.toFixed(2)}/kWh</p>
                         </div>
                     )
+                ) : (
+                    // NORMAL: neutral state
+                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 text-center">
+                        <p className="text-sm font-semibold text-slate-600">Standard rate active</p>
+                        <p className="text-xs text-slate-400 mt-1">₹{alert.currentRate.toFixed(2)}/kWh — wait for off-peak to save more on heavy loads</p>
+                    </div>
                 )}
             </div>
 
@@ -321,6 +307,98 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
                         </motion.div>
                     );
                 })}
+
+                {/* Peak: show eco-active appliances as "Already Optimized" */}
+                {alert.isCurrentlyPeak && alert.heavyAppliancesEcoActive.length > 0 && (
+                    <>
+                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1 mt-6">Already Optimized</h3>
+                        {alert.heavyAppliancesEcoActive.map((a, i) => (
+                            <motion.div
+                                key={a.id}
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: i * 0.05 }}
+                                className="bg-white rounded-2xl p-4 shadow-soft border border-emerald-100 flex items-center gap-4"
+                            >
+                                <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center">
+                                    <AppIcon category={a.category} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-0.5">
+                                        <p className="font-bold text-slate-800 text-sm truncate">{a.name}</p>
+                                        <TierBadge tier={a.optimization_tier} />
+                                    </div>
+                                    <p className="text-xs text-slate-400">
+                                        {a.rated_power_w}W • <span className="text-emerald-600 font-semibold">₹{a.costPerHour.toFixed(2)}/hr</span>
+                                        <span className="text-emerald-500 ml-1">• 🌿 Eco Mode Active</span>
+                                    </p>
+                                </div>
+                                <div className="px-3 py-2 rounded-xl bg-emerald-50 text-emerald-600 font-bold text-xs flex items-center gap-1">
+                                    <Check className="w-3 h-3" /> OK
+                                </div>
+                            </motion.div>
+                        ))}
+                    </>
+                )}
+
+                {/* Off-peak ONLY: show heavy OFF appliances as suggestions to turn on */}
+                {isOffPeak && alert.heavyAppliancesOff.length > 0 && (
+                    <>
+                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1 mt-6">
+                            💡 Suggested — Run Now at Low Rate
+                        </h3>
+                        <p className="text-xs text-slate-400 px-1 mb-2">
+                            These heavy appliances are OFF. Run them now at ₹{alert.currentRate.toFixed(2)}/kWh to save money.
+                        </p>
+                        {alert.heavyAppliancesOff.map((a, i) => {
+                            const fullAppliance = appliances.find(ap => ap.id === a.id);
+                            if (!fullAppliance) return null;
+                            const costIfRunNow = (a.rated_power_w / 1000) * alert.currentRate;
+
+                            return (
+                                <motion.div
+                                    key={a.id}
+                                    initial={{ opacity: 0, y: 20 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ delay: i * 0.05 }}
+                                    className="bg-white rounded-2xl p-4 shadow-soft border border-emerald-100 flex items-center gap-4"
+                                >
+                                    <div className="w-12 h-12 rounded-2xl bg-emerald-50/50 flex items-center justify-center">
+                                        <AppIcon category={a.category} />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-0.5">
+                                            <p className="font-bold text-slate-800 text-sm truncate">{a.name}</p>
+                                            <TierBadge tier={a.optimization_tier} />
+                                        </div>
+                                        <p className="text-xs text-slate-400">
+                                            {a.rated_power_w}W • <span className="text-emerald-600 font-semibold">₹{costIfRunNow.toFixed(2)}/hr</span>
+                                            <span className="text-slate-300 ml-1">• Currently OFF</span>
+                                        </p>
+                                    </div>
+                                    <div className="flex gap-1.5">
+                                        <button
+                                            onClick={() => handleTurnOn(fullAppliance.id)}
+                                            disabled={actionLoadingId === fullAppliance.id}
+                                            className="px-3 py-2 rounded-xl bg-emerald-500 text-white font-bold text-xs hover:bg-emerald-600 transition-colors flex items-center gap-1 shadow-sm disabled:opacity-60"
+                                        >
+                                            {actionLoadingId === fullAppliance.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <PlayCircle className="w-3 h-3" />}
+                                            Run
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                setScheduleAppliance(fullAppliance);
+                                            }}
+                                            className="px-2.5 py-2 rounded-xl bg-indigo-50 text-indigo-600 font-bold text-xs hover:bg-indigo-100 transition-colors"
+                                        >
+                                            <Calendar className="w-3 h-3" />
+                                        </button>
+                                    </div>
+                                </motion.div>
+                            );
+                        })}
+                    </>
+                )}
             </div>
 
             {/* Tariff Timeline */}
@@ -396,8 +474,8 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
                                     </div>
                                 </button>
 
-                                {/* Eco Mode (Tier 3 only) */}
-                                {(actionSheetAppliance.optimization_tier === 'tier_3_comfort') && (
+                                {/* Eco Mode (Tier 3 only, not already enabled) */}
+                                {actionSheetAppliance.optimization_tier === 'tier_3_comfort' && !actionSheetAppliance.eco_mode_enabled && (
                                     <button
                                         onClick={() => handleEcoMode(actionSheetAppliance.id)}
                                         disabled={actionLoadingId === actionSheetAppliance.id}
@@ -411,6 +489,17 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
                                             <p className="text-xs text-emerald-500">Save ~15% power consumption</p>
                                         </div>
                                     </button>
+                                )}
+                                {actionSheetAppliance.optimization_tier === 'tier_3_comfort' && actionSheetAppliance.eco_mode_enabled && (
+                                    <div className="w-full flex items-center gap-3 p-4 rounded-2xl bg-emerald-50/50 border border-emerald-100">
+                                        <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center">
+                                            <Check className="w-5 h-5 text-emerald-600" />
+                                        </div>
+                                        <div className="text-left">
+                                            <p className="font-bold text-emerald-700 text-sm">Eco Mode Already Active</p>
+                                            <p className="text-xs text-emerald-500">Running at reduced power (−15%)</p>
+                                        </div>
+                                    </div>
                                 )}
 
                                 {/* Schedule */}
@@ -443,7 +532,7 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
                 )}
             </AnimatePresence>
 
-            {/* InterceptorModal */}
+            {/* InterceptorModal — only shown during peak from action sheet */}
             <AnimatePresence>
                 {interceptAppliance && home && (
                     <InterceptorModal
@@ -467,6 +556,22 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
                                 }
                                 : undefined
                         }
+                    />
+                )}
+            </AnimatePresence>
+
+            {/* ScheduleModal — direct schedule picker (off-peak suggestions) */}
+            <AnimatePresence>
+                {scheduleAppliance && home && (
+                    <ScheduleModal
+                        homeId={home.id}
+                        appliance={scheduleAppliance}
+                        tariffSlots={slots}
+                        onClose={() => setScheduleAppliance(null)}
+                        onSaved={() => {
+                            setScheduleAppliance(null);
+                            fetchData();
+                        }}
                     />
                 )}
             </AnimatePresence>

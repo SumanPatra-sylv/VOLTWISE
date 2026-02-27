@@ -1,14 +1,22 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Power, Bot, Sliders, Settings2, Zap, Plus, Trash2, Clock, Wifi, WifiOff,
-  X, Check, ChevronDown, AlertCircle, Calendar, Loader2, Edit2, ToggleRight
+  X, Check, ChevronDown, AlertCircle, Calendar, Loader2, Edit2, ToggleRight,
+  Shield, Play, Pause
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useApp } from '../contexts/AppContext';
 import { supabase } from '../services/supabase';
 import { DBAppliance, DBTariffSlot, ApplianceCategory } from '../types/database';
 import InterceptorModal from '../components/InterceptorModal';
+import ScheduleModal from '../components/ScheduleModal';
 import { shouldIntercept, fetchUserTariffSlots, calculateCostForTime, getSlotForHour, formatHour } from '../utils/tariffOptimizer';
+import { toggleAppliance as apiToggle, setEcoMode as apiEcoMode } from '../services/backend';
+import {
+  getAutopilotStatus, getAutopilotRules, createAutopilotRule, updateAutopilotRule,
+  deleteAutopilotRule, toggleAutopilot, simulateAutopilot,
+  AutopilotRule, AutopilotStatus as APStatus, SimulationResult
+} from '../services/backend';
 
 type ViewMode = 'mobile' | 'tablet' | 'web';
 
@@ -60,6 +68,12 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
   const [tariffSlots, setTariffSlots] = useState<DBTariffSlot[]>([]);
   const [interceptAppliance, setInterceptAppliance] = useState<DBAppliance | null>(null);
 
+  // Autopilot state
+  const [autopilotStatus, setAutopilotStatus] = useState<APStatus | null>(null);
+  const [autopilotRules, setAutopilotRules] = useState<AutopilotRule[]>([]);
+  const [autopilotLoading, setAutopilotLoading] = useState(false);
+  const [simulation, setSimulation] = useState<SimulationResult | null>(null);
+
   const isWeb = viewMode === 'web';
   const isTablet = viewMode === 'tablet';
   const isCompact = isWeb || isTablet;
@@ -87,7 +101,7 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
         .from('schedules')
         .select('*')
         .eq('home_id', home.id)
-        .eq('is_active', true);
+        .order('created_at', { ascending: false });
       if (error) throw error;
       setSchedules(data || []);
     } catch (err) {
@@ -114,7 +128,32 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
     }
   }, [home?.id]);
 
-  // Real-time subscription to sync with Home page toggles
+  // Fetch autopilot status + rules
+  const fetchAutopilot = useCallback(async () => {
+    if (!home?.id) return;
+    try {
+      const [status, rules] = await Promise.all([
+        getAutopilotStatus(home.id),
+        getAutopilotRules(home.id),
+      ]);
+      setAutopilotStatus(status);
+      setAutopilotRules(rules);
+    } catch (err) {
+      console.error('Failed to fetch autopilot data:', err);
+    }
+  }, [home?.id]);
+
+  useEffect(() => {
+    fetchAutopilot();
+  }, [fetchAutopilot]);
+
+  // Unified refresh callback for Realtime + polling
+  const refresh = useCallback(() => {
+    fetchAppliances();
+    fetchSchedules();
+  }, [fetchAppliances, fetchSchedules]);
+
+  // Real-time subscription to sync with Home page toggles + backend schedule changes
   useEffect(() => {
     if (!home?.id) return;
 
@@ -128,17 +167,28 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
           table: 'appliances',
           filter: `home_id=eq.${home.id}`
         },
-        () => {
-          // Re-fetch on any change (insert, update, delete)
-          fetchAppliances();
-        }
+        () => refresh()
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'schedules',
+          filter: `home_id=eq.${home.id}`
+        },
+        () => refresh()
       )
       .subscribe();
 
+    // Polling fallback: refresh every 5s
+    const poll = setInterval(refresh, 5_000);
+
     return () => {
+      clearInterval(poll);
       supabase.removeChannel(channel);
     };
-  }, [home?.id, fetchAppliances]);
+  }, [home?.id, refresh]);
 
   const toggleAppliance = async (appliance: DBAppliance) => {
     if (!appliance.is_controllable) return;
@@ -165,27 +215,13 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
 
     setActionLoading(appliance.id);
     const newStatus = appliance.status === 'ON' ? 'OFF' : 'ON';
+    const action = newStatus === 'ON' ? 'turn_on' : 'turn_off';
     try {
-      const { error } = await supabase
-        .from('appliances')
-        .update({ status: newStatus, updated_at: new Date().toISOString() })
-        .eq('id', appliance.id);
-      if (error) throw error;
-
-      if (appliance.smart_plug_id) {
-        console.log(`[Smart Plug] Toggling ${appliance.name} to ${newStatus}`);
-      }
-
-      await supabase.from('control_logs').insert({
-        appliance_id: appliance.id,
-        user_id: (await supabase.auth.getUser()).data.user?.id,
-        action: newStatus === 'ON' ? 'turn_on' : 'turn_off',
-        trigger_source: 'manual',
-        result: 'success'
-      });
+      const result = await apiToggle(appliance.id, action);
+      if (!result.success) throw new Error(result.message || 'Toggle failed');
 
       setAppliances(prev => prev.map(a =>
-        a.id === appliance.id ? { ...a, status: newStatus } : a
+        a.id === appliance.id ? { ...a, status: result.new_status as any } : a
       ));
     } catch (err) {
       console.error('Failed to toggle appliance:', err);
@@ -244,13 +280,51 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
       <AnimatePresence>
         {autoMode && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-            <div className={`bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-100 flex items-start gap-3 ${isCompact ? 'mb-4 p-3 rounded-xl' : 'mb-6 p-5 rounded-[2rem]'}`}>
-              <div className={`mt-1 rounded-full bg-emerald-400 animate-pulse shadow-glow ${isCompact ? 'min-w-[8px] h-2' : 'min-w-[12px] h-3'}`} />
-              <div>
-                <h4 className={`font-bold text-emerald-800 mb-1 ${isCompact ? 'text-xs' : 'text-sm'}`}>AI Optimisation Active</h4>
-                <p className={`text-emerald-700/70 leading-relaxed ${isCompact ? 'text-[10px]' : 'text-xs'}`}>System automatically manages appliances based on ToD tariff.</p>
-              </div>
-            </div>
+            <AutopilotPanel
+              homeId={home?.id || ''}
+              appliances={appliances}
+              status={autopilotStatus}
+              rules={autopilotRules}
+              simulation={simulation}
+              loading={autopilotLoading}
+              compact={isCompact}
+              onToggle={async (enabled) => {
+                if (!home?.id) return;
+                setAutopilotLoading(true);
+                try {
+                  await toggleAutopilot(home.id, enabled);
+                  await fetchAutopilot();
+                } catch (err) { console.error(err); }
+                finally { setAutopilotLoading(false); }
+              }}
+              onSimulate={async () => {
+                if (!home?.id) return;
+                setAutopilotLoading(true);
+                try {
+                  const res = await simulateAutopilot(home.id);
+                  setSimulation(res);
+                } catch (err) { console.error(err); }
+                finally { setAutopilotLoading(false); }
+              }}
+              onCreateRule={async (rule) => {
+                try {
+                  await createAutopilotRule(rule);
+                  await fetchAutopilot();
+                } catch (err) { console.error(err); }
+              }}
+              onToggleRule={async (ruleId, active) => {
+                try {
+                  await updateAutopilotRule(ruleId, { is_active: active });
+                  await fetchAutopilot();
+                } catch (err) { console.error(err); }
+              }}
+              onDeleteRule={async (ruleId) => {
+                try {
+                  await deleteAutopilotRule(ruleId);
+                  await fetchAutopilot();
+                } catch (err) { console.error(err); }
+              }}
+            />
           </motion.div>
         )}
       </AnimatePresence>
@@ -287,63 +361,93 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
             )}
           </div>
 
-          <div>
-            <h3 className={`font-bold text-slate-800 px-1 ${isCompact ? 'text-sm mb-2' : 'text-lg mb-4'}`}>Active Rules</h3>
-            <div className={`grid gap-3 ${isCompact ? 'grid-cols-2' : 'grid-cols-1'}`}>
-              <motion.div whileHover={isCompact ? {} : { scale: 1.01 }} className={`bg-white border border-slate-100 shadow-soft flex flex-col gap-2 ${isCompact ? 'rounded-xl p-3' : 'rounded-[2rem] p-5 gap-3'}`}>
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-2">
-                    <div className={`rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 ${isCompact ? 'w-8 h-8' : 'w-10 h-10 rounded-2xl'}`}>
-                      <Zap className={`fill-current ${isCompact ? 'w-4 h-4' : 'w-5 h-5'}`} />
+          {autopilotRules.length > 0 && !autoMode && (
+            <div>
+              <h3 className={`font-bold text-slate-800 px-1 ${isCompact ? 'text-sm mb-2' : 'text-lg mb-4'}`}>Active Rules</h3>
+              <div className={`grid gap-3 ${isCompact ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                {autopilotRules.filter(r => r.is_active).map(rule => (
+                  <motion.div key={rule.id} whileHover={isCompact ? {} : { scale: 1.01 }} className={`bg-white border shadow-soft flex flex-col gap-2 ${isCompact ? 'rounded-xl p-3' : 'rounded-[2rem] p-5 gap-3'} ${rule.is_triggered ? 'border-l-4 border-l-amber-500 border-y border-r border-slate-100' : 'border-slate-100'}`}>
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <div className={`rounded-xl flex items-center justify-center ${isCompact ? 'w-8 h-8' : 'w-10 h-10 rounded-2xl'} ${rule.is_triggered ? 'bg-amber-50 text-amber-600' : 'bg-indigo-50 text-indigo-600'}`}>
+                          <Shield className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
+                        </div>
+                        <h4 className={`text-slate-800 font-bold ${isCompact ? 'text-xs' : 'text-sm'}`}>{rule.name}</h4>
+                      </div>
+                      <span className={`rounded-lg font-bold ${rule.is_triggered ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'} ${isCompact ? 'text-[8px] px-1.5 py-0.5' : 'text-[10px] px-2 py-1'}`}>{rule.is_triggered ? 'Triggered' : 'Active'}</span>
                     </div>
-                    <h4 className={`text-slate-800 font-bold ${isCompact ? 'text-xs' : 'text-sm'}`}>Peak Protection</h4>
-                  </div>
-                  <span className={`bg-emerald-50 text-emerald-600 rounded-lg font-bold ${isCompact ? 'text-[8px] px-1.5 py-0.5' : 'text-[10px] px-2 py-1'}`}>Active</span>
-                </div>
-                <p className={`text-slate-400 font-medium ${isCompact ? 'text-[10px] pl-10' : 'text-xs pl-12'}`}>Stops AC/Geyser when rate {'>'} ₹9</p>
-              </motion.div>
-              <motion.div whileHover={isCompact ? {} : { scale: 1.01 }} className={`bg-white border-l-4 border-l-rose-500 border-y border-r border-slate-100 shadow-soft flex flex-col gap-2 ${isCompact ? 'rounded-xl p-3' : 'rounded-[2rem] p-5 gap-3'}`}>
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-2">
-                    <div className={`rounded-xl bg-rose-50 flex items-center justify-center text-rose-500 ${isCompact ? 'w-8 h-8' : 'w-10 h-10 rounded-2xl'}`}>
-                      <Bot className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
-                    </div>
-                    <h4 className={`text-slate-800 font-bold ${isCompact ? 'text-xs' : 'text-sm'}`}>Budget Guardian</h4>
-                  </div>
-                  <span className={`bg-rose-50 text-rose-600 rounded-lg font-bold ${isCompact ? 'text-[8px] px-1.5 py-0.5' : 'text-[10px] px-2 py-1'}`}>Triggered</span>
-                </div>
-                <p className={`text-slate-400 font-medium ${isCompact ? 'text-[10px] pl-10' : 'text-xs pl-12'}`}>Monthly limit (80%) reached.</p>
-              </motion.div>
+                    <p className={`text-slate-400 font-medium ${isCompact ? 'text-[10px] pl-10' : 'text-xs pl-12'}`}>{rule.description || `${rule.action} during ${rule.condition_type}`}</p>
+                  </motion.div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {schedules.length > 0 && (
             <div>
               <h3 className={`font-bold text-slate-800 px-1 ${isCompact ? 'text-sm mb-2' : 'text-lg mb-4'}`}>Scheduled Actions</h3>
               <div className="space-y-2">
-                {schedules.map(schedule => {
+                {[...schedules]
+                  .sort((a, b) => {
+                    // Active first, then by created_at desc
+                    if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
+                    return 0; // already ordered by created_at desc from DB
+                  })
+                  .map(schedule => {
                   const app = appliances.find(a => a.id === schedule.appliance_id);
                   const dayNames = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
                   const daysDisplay = schedule.repeat_type === 'custom' && schedule.custom_days
                     ? schedule.custom_days.map(d => dayNames[d]).join(', ')
                     : schedule.repeat_type;
+
+                  // Compute "Runs until" display
+                  const endTimeDisplay = schedule.end_time ? schedule.end_time.slice(0, 5) : null;
+                  const startTimeDisplay = schedule.start_time?.slice(0, 5);
+
+                  // Determine if this schedule is currently running
+                  const now = new Date();
+                  const nowMins = now.getHours() * 60 + now.getMinutes();
+                  const [sh, sm] = (schedule.start_time || '00:00').split(':').map(Number);
+                  const startMins = sh * 60 + sm;
+                  let endMins = -1;
+                  let isRunning = false;
+                  if (schedule.end_time) {
+                    const [eh, em] = schedule.end_time.split(':').map(Number);
+                    endMins = eh * 60 + em;
+                    // Handle midnight crossing
+                    if (endMins <= startMins) {
+                      isRunning = schedule.is_active && (nowMins >= startMins || nowMins < endMins);
+                    } else {
+                      isRunning = schedule.is_active && nowMins >= startMins && nowMins < endMins;
+                    }
+                  } else {
+                    isRunning = schedule.is_active && app?.status === 'ON' && nowMins >= startMins;
+                  }
+
+                  // Completed = not active and has a last_executed
+                  const isCompleted = !schedule.is_active;
+
                   return (
-                    <div key={schedule.id} className={`bg-white border border-slate-100 shadow-soft flex items-center justify-between ${isCompact ? 'rounded-xl p-3' : 'rounded-2xl p-4'}`}>
+                    <div key={schedule.id} className={`bg-white border shadow-soft flex items-center justify-between ${isCompact ? 'rounded-xl p-3' : 'rounded-2xl p-4'} ${isCompleted ? 'opacity-50 border-slate-100' : isRunning ? 'border-cyan-200' : 'border-slate-100'}`}>
                       <div className="flex items-center gap-3">
-                        <div className={`bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center ${isCompact ? 'w-8 h-8' : 'w-10 h-10'}`}>
+                        <div className={`rounded-xl flex items-center justify-center ${isCompact ? 'w-8 h-8' : 'w-10 h-10'} ${isRunning ? 'bg-cyan-100 text-cyan-600' : isCompleted ? 'bg-slate-100 text-slate-400' : 'bg-indigo-50 text-indigo-600'}`}>
                           <Clock className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
                         </div>
                         <div>
                           <p className={`font-bold text-slate-800 ${isCompact ? 'text-xs' : 'text-sm'}`}>
-                            {app?.name || 'Unknown'} at {schedule.start_time?.slice(0, 5)}
+                            {app?.name || 'Unknown'} at {startTimeDisplay}
+                            {endTimeDisplay ? ` · until ${endTimeDisplay}` : ''}
                           </p>
                           <p className={`text-slate-400 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>
-                            {daysDisplay}{schedule.created_by === 'ai_optimizer' ? ' • 🤖 AI' : ''}
+                            {isRunning ? '🟢 Running now' : ''}
+                            {isRunning && endTimeDisplay ? ` · Ends at ${endTimeDisplay}` : ''}
+                            {!isRunning ? daysDisplay : ''}
+                            {schedule.created_by === 'ai_optimizer' ? ' • 🤖 AI' : ''}
                           </p>
                         </div>
                       </div>
-                      <div className={`px-2 py-1 rounded-lg font-bold ${schedule.is_active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'} ${isCompact ? 'text-[9px]' : 'text-xs'}`}>
-                        {schedule.is_active ? 'Active' : 'Paused'}
+                      <div className={`px-2 py-1 rounded-lg font-bold ${isRunning ? 'bg-cyan-50 text-cyan-600' : schedule.is_active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'} ${isCompact ? 'text-[9px]' : 'text-xs'}`}>
+                        {isRunning ? 'Running' : schedule.is_active ? 'Active' : 'Done'}
                       </div>
                     </div>
                   );
@@ -434,14 +538,13 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
             homeId={home.id}
             onClose={() => setInterceptAppliance(null)}
             onRunNow={async () => {
-              // User chose "Ignore & Run Now" — proceed with toggle
+              // User chose "Ignore & Run Now" — proceed with toggle via backend
               setInterceptAppliance(null);
               const appliance = interceptAppliance;
               setActionLoading(appliance.id);
               try {
-                await supabase.from('appliances').update({ status: 'ON', updated_at: new Date().toISOString() }).eq('id', appliance.id);
-                await supabase.from('control_logs').insert({ appliance_id: appliance.id, user_id: (await supabase.auth.getUser()).data.user?.id, action: 'turn_on', trigger_source: 'manual_override', result: 'success' });
-                setAppliances(prev => prev.map(a => a.id === appliance.id ? { ...a, status: 'ON' } : a));
+                const result = await apiToggle(appliance.id, 'turn_on');
+                if (result.success) setAppliances(prev => prev.map(a => a.id === appliance.id ? { ...a, status: 'ON' } : a));
               } catch (err) { console.error('Failed to toggle:', err); }
               finally { setActionLoading(null); }
             }}
@@ -454,8 +557,7 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
               interceptAppliance.optimization_tier === 'tier_3_comfort'
                 ? async () => {
                   setInterceptAppliance(null);
-                  await supabase.from('appliances').update({ eco_mode_enabled: true, status: 'ON', updated_at: new Date().toISOString() }).eq('id', interceptAppliance.id);
-                  await supabase.from('control_logs').insert({ appliance_id: interceptAppliance.id, user_id: (await supabase.auth.getUser()).data.user?.id, action: 'eco_mode_on', trigger_source: 'optimizer', result: 'success' });
+                  await apiEcoMode(interceptAppliance.id, true);
                   fetchAppliances();
                 }
                 : undefined
@@ -463,6 +565,241 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
           />
         )}
       </AnimatePresence>
+    </div>
+  );
+};
+
+// ── Autopilot Panel ────────────────────────────────────────────────
+interface AutopilotPanelProps {
+  homeId: string;
+  appliances: DBAppliance[];
+  status: APStatus | null;
+  rules: AutopilotRule[];
+  simulation: SimulationResult | null;
+  loading: boolean;
+  compact: boolean;
+  onToggle: (enabled: boolean) => void;
+  onSimulate: () => void;
+  onCreateRule: (rule: any) => void;
+  onToggleRule: (ruleId: string, active: boolean) => void;
+  onDeleteRule: (ruleId: string) => void;
+}
+
+const ACTION_LABELS: Record<string, string> = {
+  turn_off: 'Turn Off',
+  eco_mode: 'Eco Mode',
+  reduce_power: 'Reduce Power',
+};
+
+const AutopilotPanel: React.FC<AutopilotPanelProps> = ({
+  homeId, appliances, status, rules, simulation, loading, compact,
+  onToggle, onSimulate, onCreateRule, onToggleRule, onDeleteRule,
+}) => {
+  const enabled = status?.enabled ?? false;
+  const [showAddRule, setShowAddRule] = useState(false);
+  const [newRuleName, setNewRuleName] = useState('');
+  const [newRuleAction, setNewRuleAction] = useState('turn_off');
+  const [selectedApplianceIds, setSelectedApplianceIds] = useState<string[]>([]);
+
+  const controllable = appliances.filter(a => a.is_controllable);
+
+  const handleCreateRule = () => {
+    if (!newRuleName.trim() || selectedApplianceIds.length === 0) return;
+    onCreateRule({
+      home_id: homeId,
+      name: newRuleName.trim(),
+      description: `${ACTION_LABELS[newRuleAction]} selected appliances during peak tariff`,
+      condition_type: 'peak_tariff',
+      condition_value: { min_rate: 9.0 },
+      target_appliance_ids: selectedApplianceIds,
+      action: newRuleAction,
+    });
+    setShowAddRule(false);
+    setNewRuleName('');
+    setNewRuleAction('turn_off');
+    setSelectedApplianceIds([]);
+  };
+
+  return (
+    <div className={`space-y-3 ${compact ? 'mb-4' : 'mb-6'}`}>
+      {/* Master Toggle */}
+      <div className={`bg-gradient-to-r ${enabled ? 'from-emerald-50 to-teal-50 border-emerald-100' : 'from-slate-50 to-slate-100 border-slate-200'} border flex items-center justify-between ${compact ? 'p-3 rounded-xl' : 'p-5 rounded-[2rem]'}`}>
+        <div className="flex items-center gap-3">
+          <div className={`rounded-full ${enabled ? 'bg-emerald-400 animate-pulse shadow-glow' : 'bg-slate-300'} ${compact ? 'w-2 h-2' : 'w-3 h-3'}`} />
+          <div>
+            <h4 className={`font-bold ${enabled ? 'text-emerald-800' : 'text-slate-600'} ${compact ? 'text-xs' : 'text-sm'}`}>
+              {enabled ? 'Peak Optimization Active' : 'Autopilot Disabled'}
+            </h4>
+            <p className={`${enabled ? 'text-emerald-700/70' : 'text-slate-400'} ${compact ? 'text-[10px]' : 'text-xs'}`}>
+              {enabled
+                ? `${status?.protected_appliances || 0} appliance(s) protected · ${status?.active_rules || 0} rule(s)`
+                : 'Enable to auto-manage appliances during peak tariff'
+              }
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={() => onToggle(!enabled)}
+          disabled={loading}
+          className={`${compact ? 'w-10 h-6' : 'w-12 h-7'} rounded-full transition-all flex-shrink-0 ${enabled ? 'bg-emerald-500' : 'bg-slate-300'}`}
+        >
+          <div className={`${compact ? 'w-4 h-4' : 'w-5 h-5'} bg-white rounded-full shadow transition-transform ${enabled ? (compact ? 'translate-x-5' : 'translate-x-6') : 'translate-x-1'}`} />
+        </button>
+      </div>
+
+      {enabled && (
+        <>
+          {/* Active Rules */}
+          {rules.length > 0 && (
+            <div className="space-y-2">
+              {rules.map(rule => {
+                const targetApps = appliances.filter(a => (rule.target_appliance_ids || []).includes(a.id));
+                return (
+                  <div key={rule.id} className={`bg-white border shadow-soft flex flex-col ${compact ? 'rounded-xl p-3' : 'rounded-2xl p-4'} ${rule.is_triggered ? 'border-amber-200' : 'border-slate-100'}`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className={`rounded-lg flex items-center justify-center ${compact ? 'w-7 h-7' : 'w-9 h-9'} ${rule.is_triggered ? 'bg-amber-100 text-amber-600' : 'bg-indigo-50 text-indigo-600'}`}>
+                          <Shield className={compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} />
+                        </div>
+                        <div>
+                          <p className={`font-bold text-slate-800 ${compact ? 'text-xs' : 'text-sm'}`}>{rule.name}</p>
+                          <p className={`text-slate-400 ${compact ? 'text-[10px]' : 'text-xs'}`}>
+                            {ACTION_LABELS[rule.action] || rule.action} · {targetApps.length} appliance(s)
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded-lg font-bold ${rule.is_triggered ? 'bg-amber-50 text-amber-600' : rule.is_active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'} ${compact ? 'text-[8px]' : 'text-[10px]'}`}>
+                          {rule.is_triggered ? 'Triggered' : rule.is_active ? 'Ready' : 'Paused'}
+                        </span>
+                        <button onClick={() => onToggleRule(rule.id, !rule.is_active)} className="p-1 rounded hover:bg-slate-100">
+                          {rule.is_active ? <Pause className="w-3 h-3 text-slate-400" /> : <Play className="w-3 h-3 text-slate-400" />}
+                        </button>
+                        <button onClick={() => onDeleteRule(rule.id)} className="p-1 rounded hover:bg-rose-50">
+                          <Trash2 className="w-3 h-3 text-slate-400 hover:text-rose-500" />
+                        </button>
+                      </div>
+                    </div>
+                    {targetApps.length > 0 && (
+                      <div className={`flex flex-wrap gap-1 mt-2 ${compact ? 'pl-9' : 'pl-11'}`}>
+                        {targetApps.map(a => (
+                          <span key={a.id} className={`bg-slate-100 text-slate-600 rounded-md font-medium ${compact ? 'text-[8px] px-1.5 py-0.5' : 'text-[10px] px-2 py-0.5'}`}>
+                            {a.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Add Rule */}
+          {!showAddRule ? (
+            <button
+              onClick={() => setShowAddRule(true)}
+              className={`w-full border-2 border-dashed border-slate-200 text-slate-400 font-bold flex items-center justify-center gap-2 hover:border-primary hover:text-primary transition-colors ${compact ? 'rounded-xl py-2 text-xs' : 'rounded-2xl py-3 text-sm'}`}
+            >
+              <Plus className={compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} /> Add Peak Rule
+            </button>
+          ) : (
+            <div className={`bg-white border border-slate-200 shadow-soft ${compact ? 'rounded-xl p-3' : 'rounded-2xl p-4'}`}>
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  value={newRuleName}
+                  onChange={e => setNewRuleName(e.target.value)}
+                  placeholder="Rule name (e.g. Peak Saver)"
+                  className={`w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/50 ${compact ? 'text-xs' : 'text-sm'}`}
+                />
+
+                <div>
+                  <label className={`block font-medium text-slate-600 mb-1 ${compact ? 'text-[10px]' : 'text-xs'}`}>Action during peak</label>
+                  <div className="flex gap-2">
+                    {(['turn_off', 'eco_mode'] as const).map(act => (
+                      <button
+                        key={act}
+                        onClick={() => setNewRuleAction(act)}
+                        className={`flex-1 py-2 rounded-xl border font-bold transition-all ${compact ? 'text-[10px]' : 'text-xs'} ${newRuleAction === act ? 'border-primary bg-primary/5 text-primary' : 'border-slate-200 text-slate-500'}`}
+                      >
+                        {ACTION_LABELS[act]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className={`block font-medium text-slate-600 mb-1 ${compact ? 'text-[10px]' : 'text-xs'}`}>Select appliances</label>
+                  <div className={`flex flex-wrap gap-1.5`}>
+                    {controllable.map(a => {
+                      const selected = selectedApplianceIds.includes(a.id);
+                      return (
+                        <button
+                          key={a.id}
+                          onClick={() => setSelectedApplianceIds(prev =>
+                            selected ? prev.filter(id => id !== a.id) : [...prev, a.id]
+                          )}
+                          className={`px-2.5 py-1.5 rounded-xl border font-medium transition-all ${compact ? 'text-[10px]' : 'text-xs'} ${selected ? 'border-primary bg-primary/10 text-primary' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}
+                        >
+                          {selected && <Check className="w-3 h-3 inline mr-1" />}
+                          {a.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button onClick={() => setShowAddRule(false)} className={`flex-1 py-2 rounded-xl border border-slate-200 font-bold text-slate-500 ${compact ? 'text-xs' : 'text-sm'}`}>Cancel</button>
+                  <button
+                    onClick={handleCreateRule}
+                    disabled={!newRuleName.trim() || selectedApplianceIds.length === 0}
+                    className={`flex-1 py-2 rounded-xl bg-primary text-white font-bold disabled:opacity-40 ${compact ? 'text-xs' : 'text-sm'}`}
+                  >
+                    Create Rule
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Simulate button */}
+          <button
+            onClick={onSimulate}
+            disabled={loading}
+            className={`w-full bg-indigo-50 border border-indigo-100 text-indigo-600 font-bold flex items-center justify-center gap-2 hover:bg-indigo-100 transition-colors ${compact ? 'rounded-xl py-2 text-xs' : 'rounded-2xl py-3 text-sm'}`}
+          >
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+            Simulate Peak
+          </button>
+
+          {/* Simulation result */}
+          {simulation && (
+            <div className={`bg-indigo-50 border border-indigo-100 ${compact ? 'rounded-xl p-3' : 'rounded-2xl p-4'}`}>
+              <p className={`font-bold text-indigo-800 mb-2 ${compact ? 'text-xs' : 'text-sm'}`}>
+                Simulation: {simulation.message}
+              </p>
+              {simulation.would_affect.length > 0 ? (
+                <div className="space-y-1">
+                  {simulation.would_affect.map((item, i) => (
+                    <div key={i} className={`flex justify-between items-center ${compact ? 'text-[10px]' : 'text-xs'}`}>
+                      <span className="text-indigo-700">{item.name} → {ACTION_LABELS[item.action] || item.action}</span>
+                      <span className="text-indigo-500 font-medium">saves ₹{item.hourly_savings}/hr</span>
+                    </div>
+                  ))}
+                  <div className={`border-t border-indigo-200 pt-1 mt-1 flex justify-between font-bold text-indigo-800 ${compact ? 'text-[10px]' : 'text-xs'}`}>
+                    <span>Total savings</span>
+                    <span>₹{simulation.total_savings_estimate}/hr</span>
+                  </div>
+                </div>
+              ) : (
+                <p className={`text-indigo-600 ${compact ? 'text-[10px]' : 'text-xs'}`}>No appliances currently ON that would be affected.</p>
+              )}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 };
@@ -523,8 +860,9 @@ const ApplianceTile: React.FC<ApplianceTileProps> = ({ appliance, compact, costP
         ) : isScheduled ? (
           (() => {
             // Find the active schedule for this appliance to show the time
-            const activeSchedule = schedules.find(s => s.appliance_id === appliance.id);
+            const activeSchedule = schedules.find(s => s.appliance_id === appliance.id && s.is_active);
             const schedTime = activeSchedule?.start_time?.slice(0, 5) || appliance.schedule_time;
+            const endTime = activeSchedule?.end_time?.slice(0, 5);
             // Format nicely: "Tonight 9 PM" or "9:00 AM"
             let displayTime = schedTime || '';
             if (schedTime) {
@@ -536,9 +874,22 @@ const ApplianceTile: React.FC<ApplianceTileProps> = ({ appliance, compact, costP
               const tonight = h > now ? 'Tonight' : '';
               displayTime = `${tonight ? tonight + ' ' : ''}${display}${mStr !== '00' ? ':' + mStr : ''} ${suffix}`;
             }
+            // "Runs until" label
+            let untilLabel = '';
+            if (endTime) {
+              const [eh, em] = endTime.split(':').map(Number);
+              const eSuffix = eh >= 12 ? 'PM' : 'AM';
+              const eDisplay = eh === 0 ? 12 : eh > 12 ? eh - 12 : eh;
+              untilLabel = `Until ${eDisplay}${em ? ':' + String(em).padStart(2, '0') : ''} ${eSuffix}`;
+            }
             return (
-              <div className={`flex items-center gap-1 font-medium text-indigo-500 bg-indigo-50 rounded-lg self-start inline-flex ${compact ? 'text-[9px] px-1.5 py-0.5' : 'text-xs px-2 py-1'}`}>
-                <Clock className={compact ? 'w-2 h-2' : 'w-3 h-3'} /> {displayTime || 'Scheduled'}
+              <div className="flex flex-col gap-0.5">
+                <div className={`flex items-center gap-1 font-medium text-indigo-500 bg-indigo-50 rounded-lg self-start inline-flex ${compact ? 'text-[9px] px-1.5 py-0.5' : 'text-xs px-2 py-1'}`}>
+                  <Clock className={compact ? 'w-2 h-2' : 'w-3 h-3'} /> {displayTime || 'Scheduled'}
+                </div>
+                {untilLabel && (
+                  <span className={`text-slate-400 font-medium ${compact ? 'text-[8px]' : 'text-[10px]'}`}>{untilLabel}</span>
+                )}
               </div>
             );
           })()
@@ -654,275 +1005,6 @@ const AddApplianceModal: React.FC<AddApplianceModalProps> = ({ homeId, appliance
         </div>
       </motion.div>
     </motion.div>
-  );
-};
-
-// ── Schedule Modal ─────────────────────────────────────────────────
-interface ScheduleModalProps { homeId: string; appliance: DBAppliance; tariffSlots: DBTariffSlot[]; onClose: () => void; onSaved: () => void; }
-
-const DURATION_OPTIONS = [
-  { label: '15 min', value: 0.25 },
-  { label: '30 min', value: 0.5 },
-  { label: '1 hr', value: 1 },
-  { label: '2 hr', value: 2 },
-  { label: 'Custom', value: -1 },
-  { label: 'Let it run', value: 0 },
-];
-
-const ScheduleModal: React.FC<ScheduleModalProps> = ({ homeId, appliance, tariffSlots, onClose, onSaved }) => {
-  // Internal time stored as 24h HH:MM for backend; AM/PM for display
-  const [hour12, setHour12] = useState(10);      // 1-12
-  const [minute, setMinute] = useState(0);        // 0-59
-  const [ampm, setAmpm] = useState<'AM' | 'PM'>('PM');
-  const [durationValue, setDurationValue] = useState(1); // hours, 0 = no auto-off, -1 = custom
-  const [customMinutes, setCustomMinutes] = useState(45);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  // Convert AM/PM state to 24h string for backend
-  const to24h = (h12: number, m: number, period: 'AM' | 'PM'): string => {
-    let h24 = h12 % 12;
-    if (period === 'PM') h24 += 12;
-    return `${String(h24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-  };
-  const time = to24h(hour12, minute, ampm);
-
-  // Display formatted time
-  const displayTime = `${hour12}:${String(minute).padStart(2, '0')} ${ampm}`;
-
-  // Effective duration in hours
-  const effectiveDuration = durationValue === -1 ? customMinutes / 60 : durationValue;
-
-  // Cost calculation for the selected time
-  const selectedHour = parseInt(time.split(':')[0], 10);
-  const selectedSlot = tariffSlots.length > 0 ? getSlotForHour(selectedHour, tariffSlots) : null;
-  const isPeak = selectedSlot?.slot_type === 'peak';
-
-  // Cost if run at selected time vs cheapest
-  const costNow = tariffSlots.length > 0 && effectiveDuration > 0
-    ? calculateCostForTime(appliance.rated_power_w, selectedHour, effectiveDuration, tariffSlots, minute)
-    : 0;
-
-  // Find cheapest slot
-  const cheapestSlot = tariffSlots.length > 0
-    ? [...tariffSlots].sort((a, b) => a.rate - b.rate)[0]
-    : null;
-  const cheapestCost = cheapestSlot && effectiveDuration > 0
-    ? calculateCostForTime(appliance.rated_power_w, cheapestSlot.start_hour, effectiveDuration, tariffSlots)
-    : 0;
-  const savings = costNow - cheapestCost;
-
-  const handleSave = async () => {
-    setSaving(true); setError('');
-    try {
-      // UPSERT: Delete any existing pending schedules for this appliance
-      await supabase
-        .from('schedules')
-        .delete()
-        .eq('appliance_id', appliance.id)
-        .eq('is_active', true);
-
-      // Calculate end_time if duration is set (not "Let it run")
-      let endTime: string | null = null;
-      if (effectiveDuration > 0) {
-        const [hStr, mStr] = time.split(':');
-        const totalMinutes = parseInt(hStr, 10) * 60 + parseInt(mStr, 10) + Math.round(effectiveDuration * 60);
-        const endH = Math.floor(totalMinutes / 60) % 24;
-        const endM = totalMinutes % 60;
-        endTime = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
-      }
-
-      // Insert new schedule (single row: ON at start_time, OFF at end_time)
-      const { error: err } = await supabase.from('schedules').insert({
-        home_id: homeId,
-        appliance_id: appliance.id,
-        start_time: time,
-        end_time: endTime,
-        repeat_type: 'once',
-        is_active: true,
-        created_by: 'user',
-      });
-      if (err) throw err;
-
-      // Update appliance card to show scheduled time
-      await supabase.from('appliances')
-        .update({ status: 'SCHEDULED', schedule_time: time, updated_at: new Date().toISOString() })
-        .eq('id', appliance.id);
-
-      onSaved();
-    } catch (err: any) { setError(err.message || 'Failed to create schedule'); }
-    finally { setSaving(false); }
-  };
-
-
-  return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/50 z-[60] flex items-end sm:items-center justify-center p-4" onClick={onClose}>
-      <motion.div initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 100, opacity: 0 }} onClick={e => e.stopPropagation()} className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md mb-20 sm:mb-0 max-h-[85vh] overflow-y-auto">
-        <div className="p-6">
-          <div className="flex justify-between items-center mb-5">
-            <div><h2 className="text-xl font-bold text-slate-800">Schedule</h2><span className="text-sm text-slate-400">{appliance.name} • {appliance.rated_power_w}W</span></div>
-            <button onClick={onClose} className="p-2 rounded-full hover:bg-slate-100"><X className="w-5 h-5 text-slate-400" /></button>
-          </div>
-
-          <div className="space-y-5">
-            {/* AM/PM Time Picker */}
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Start Time</label>
-              <div className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl">
-                {/* Hour selector */}
-                <div className="flex-1">
-                  <label className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 block text-center">Hour</label>
-                  <div className="grid grid-cols-4 gap-1">
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(h => (
-                      <button key={h} onClick={() => setHour12(h)}
-                        className={`py-1.5 rounded-lg text-xs font-bold transition-all ${hour12 === h ? 'bg-indigo-500 text-white shadow-sm' : 'bg-white text-slate-600 hover:bg-indigo-50'
-                          }`}
-                      >{h}</button>
-                    ))}
-                  </div>
-                </div>
-                {/* Minute selector — scrollable wheel 0-59 */}
-                <div className="w-16">
-                  <label className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 block text-center">Min</label>
-                  <div className="flex flex-col gap-0.5 h-[140px] overflow-y-auto snap-y snap-mandatory scrollbar-thin" id="minute-scroll">
-                    {Array.from({ length: 60 }, (_, m) => (
-                      <button key={m} onClick={() => setMinute(m)}
-                        className={`py-1 rounded-lg text-xs font-bold transition-all flex-shrink-0 snap-center ${minute === m ? 'bg-indigo-500 text-white shadow-sm' : 'bg-white text-slate-600 hover:bg-indigo-50'
-                          }`}
-                      >{String(m).padStart(2, '0')}</button>
-                    ))}
-                  </div>
-                </div>
-                {/* AM/PM selector */}
-                <div className="w-14">
-                  <label className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 block text-center">&nbsp;</label>
-                  <div className="flex flex-col gap-1">
-                    <button onClick={() => setAmpm('AM')}
-                      className={`py-2.5 rounded-lg text-xs font-bold transition-all ${ampm === 'AM' ? 'bg-indigo-500 text-white shadow-sm' : 'bg-white text-slate-600 hover:bg-indigo-50'
-                        }`}
-                    >AM</button>
-                    <button onClick={() => setAmpm('PM')}
-                      className={`py-2.5 rounded-lg text-xs font-bold transition-all ${ampm === 'PM' ? 'bg-indigo-500 text-white shadow-sm' : 'bg-white text-slate-600 hover:bg-indigo-50'
-                        }`}
-                    >PM</button>
-                  </div>
-                </div>
-              </div>
-              {/* Selected time display + peak indicator */}
-              <div className="flex items-center justify-between mt-2">
-                <span className="text-lg font-bold text-slate-800">{displayTime}</span>
-                {tariffSlots.length > 0 && (
-                  <div className={`text-xs flex items-center gap-1 ${isPeak ? 'text-rose-500' : 'text-emerald-600'}`}>
-                    <span className={`w-2 h-2 rounded-full ${isPeak ? 'bg-rose-400' : 'bg-emerald-400'}`} />
-                    {selectedSlot?.slot_type} — ₹{selectedSlot?.rate}/kWh
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Duration Picker */}
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Run for</label>
-              <div className="grid grid-cols-3 gap-2">
-                {DURATION_OPTIONS.map(opt => (
-                  <button
-                    key={opt.label}
-                    onClick={() => setDurationValue(opt.value)}
-                    className={`py-2.5 rounded-xl text-xs font-bold transition-all ${durationValue === opt.value
-                      ? (opt.value === 0 ? 'bg-amber-500 text-white' : 'bg-indigo-500 text-white')
-                      : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                      }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-              {/* Custom duration slider */}
-              {durationValue === -1 && (
-                <div className="mt-3 p-3 bg-slate-50 rounded-xl">
-                  <div className="flex justify-between text-xs text-slate-500 mb-1">
-                    <span>Custom Duration</span>
-                    <span className="font-bold text-slate-800">{customMinutes} min</span>
-                  </div>
-                  <input
-                    type="range" min="5" max="240" step="5"
-                    value={customMinutes}
-                    onChange={e => setCustomMinutes(parseInt(e.target.value, 10))}
-                    className="w-full accent-indigo-500"
-                  />
-                  <div className="flex justify-between text-[10px] text-slate-400">
-                    <span>5 min</span><span>4 hrs</span>
-                  </div>
-                </div>
-              )}
-              {/* Let it run warning */}
-              {durationValue === 0 && (
-                <div className="mt-2 text-[11px] text-amber-600 bg-amber-50 px-3 py-2 rounded-lg flex items-start gap-1.5">
-                  <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                  <span>Appliance will stay ON until you manually turn it off. No auto-off.</span>
-                </div>
-              )}
-            </div>
-
-            {/* Cost Comparison — only visible when tariff data exists and duration > 0 */}
-            {tariffSlots.length > 0 && effectiveDuration > 0 && (
-              <div className={`p-4 rounded-2xl border ${isPeak ? 'bg-rose-50 border-rose-200' : 'bg-emerald-50 border-emerald-200'}`}>
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-xs font-bold text-slate-600">Cost at {displayTime}</span>
-                  <span className={`text-sm font-bold ${isPeak ? 'text-rose-600' : 'text-emerald-600'}`}>₹{costNow.toFixed(2)}</span>
-                </div>
-                {isPeak && cheapestSlot && savings > 0.01 && (
-                  <>
-                    <div className="h-px bg-slate-200 my-2" />
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="text-xs text-slate-500">
-                        Cheapest at {formatHour(cheapestSlot.start_hour)} ({cheapestSlot.slot_type})
-                      </span>
-                      <span className="text-sm font-bold text-emerald-600">₹{cheapestCost.toFixed(2)}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 mt-2">
-                      <Zap className="w-3.5 h-3.5 text-amber-500" />
-                      <span className="text-xs font-bold text-amber-600">
-                        You'd save ₹{savings.toFixed(2)} ({Math.round((savings / costNow) * 100)}%) by shifting
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => {
-                        const cheapHour = cheapestSlot.start_hour;
-                        // Convert 24h hour to 12h AM/PM state
-                        const newAmpm = cheapHour >= 12 ? 'PM' : 'AM';
-                        const newH12 = cheapHour === 0 ? 12 : cheapHour > 12 ? cheapHour - 12 : cheapHour;
-                        setHour12(newH12);
-                        setMinute(0);
-                        setAmpm(newAmpm as 'AM' | 'PM');
-                      }}
-                      className="mt-3 w-full py-2 rounded-xl bg-emerald-500 text-white text-xs font-bold hover:bg-emerald-600 transition-colors flex items-center justify-center gap-1.5"
-                    >
-                      <Calendar className="w-3.5 h-3.5" /> Switch to {formatHour(cheapestSlot.start_hour)}
-                    </button>
-                  </>
-                )}
-                {!isPeak && (
-                  <div className="flex items-center gap-1.5">
-                    <Check className="w-3.5 h-3.5 text-emerald-600" />
-                    <span className="text-xs font-medium text-emerald-700">Great choice — this is a low-rate window!</span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {error && <div className="flex items-center gap-2 text-rose-500 text-sm bg-rose-50 p-3 rounded-xl"><AlertCircle className="w-4 h-4" /> {error}</div>}
-          </div>
-
-          <div className="flex gap-3 mt-6">
-            <button onClick={onClose} className="flex-1 py-3 rounded-xl border border-slate-200 font-bold text-slate-600">Cancel</button>
-            <button onClick={handleSave} disabled={saving} className="flex-1 py-3 rounded-xl bg-indigo-500 text-white font-bold flex items-center justify-center gap-2 shadow-lg shadow-indigo-200">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Calendar className="w-4 h-4" />} Set Schedule
-            </button>
-          </div>
-        </div>
-      </motion.div>
-    </motion.div >
   );
 };
 

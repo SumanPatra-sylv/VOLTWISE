@@ -13,8 +13,16 @@ dist-ssr
 
 # Environment files — NEVER commit these
 .env
-.env.*
-*.local
+.env.local
+.env.production
+.env.development
+# .env.example is intentionally NOT excluded (safe template)
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
 
 # Editor directories and files
 .vscode/*

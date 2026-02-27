@@ -47,7 +47,9 @@ export interface OptimizationAlert {
     isCurrentlyPeak: boolean;
     currentSlotType: string;
     currentRate: number;
-    heavyAppliancesOn: HeavyAppliance[];
+    heavyAppliancesOn: HeavyAppliance[];       // ON during peak, need action
+    heavyAppliancesEcoActive: HeavyAppliance[]; // ON + eco mode already enabled (no action needed)
+    heavyAppliancesOff: HeavyAppliance[];       // OFF heavy appliances (for off-peak suggestions)
     totalSavingsPerHour: number;  // ₹ across all heavy appliances if shifted
 }
 
@@ -270,36 +272,57 @@ export function calculateOptimizationAlert(
     // Find the cheapest rate to calculate savings
     const cheapestRate = Math.min(...slots.map(s => s.rate));
 
-    // Filter to heavy appliances (tier 1-3) that are currently ON
-    const heavyOn = appliances
+    // Helper to map appliance to HeavyAppliance
+    const toHeavy = (a: DBAppliance): HeavyAppliance => {
+        const tier = a.optimization_tier || CATEGORY_TO_TIER[a.category] || 'tier_4_essential';
+        const effectivePowerW = a.eco_mode_enabled
+            ? a.rated_power_w * (1 - ECO_MODE_REDUCTION)
+            : a.rated_power_w;
+        const costPerHour = (effectivePowerW / 1000) * currentRate;
+        return {
+            id: a.id,
+            name: a.name,
+            category: a.category,
+            optimization_tier: tier as OptimizationTier,
+            rated_power_w: a.rated_power_w,
+            costPerHour: Math.round(costPerHour * 100) / 100,
+            eco_mode_enabled: a.eco_mode_enabled,
+        };
+    };
+
+    // All heavy (tier 1-3) appliances that are ON
+    const allHeavyOn = appliances.filter(a => {
+        const tier = a.optimization_tier || CATEGORY_TO_TIER[a.category] || 'tier_4_essential';
+        return (
+            OPTIMIZABLE_TIERS.includes(tier) &&
+            (a.status === 'ON' || a.status === 'WARNING') &&
+            a.is_active
+        );
+    });
+
+    // Split: tier_3 with eco already on = "already optimized", rest = "needs action"
+    const heavyOn = allHeavyOn
+        .filter(a => !(a.optimization_tier === 'tier_3_comfort' && a.eco_mode_enabled))
+        .map(toHeavy);
+
+    const heavyEcoActive = allHeavyOn
+        .filter(a => a.optimization_tier === 'tier_3_comfort' && a.eco_mode_enabled)
+        .map(toHeavy);
+
+    // Heavy appliances that are OFF (for off-peak "turn on" suggestions)
+    const heavyOff = appliances
         .filter(a => {
             const tier = a.optimization_tier || CATEGORY_TO_TIER[a.category] || 'tier_4_essential';
             return (
                 OPTIMIZABLE_TIERS.includes(tier) &&
-                (a.status === 'ON' || a.status === 'WARNING') &&
-                a.is_active
+                (a.status === 'OFF' || a.status === 'SCHEDULED') &&
+                a.is_active &&
+                a.is_controllable
             );
         })
-        .map(a => {
-            const tier = a.optimization_tier || CATEGORY_TO_TIER[a.category] || 'tier_4_essential';
-            // Apply eco mode reduction: if eco_mode_enabled, effective power is 85% of rated
-            const effectivePowerW = a.eco_mode_enabled
-                ? a.rated_power_w * (1 - ECO_MODE_REDUCTION)
-                : a.rated_power_w;
-            const costPerHour = (effectivePowerW / 1000) * currentRate;
-            return {
-                id: a.id,
-                name: a.name,
-                category: a.category,
-                optimization_tier: tier as OptimizationTier,
-                rated_power_w: a.rated_power_w,
-                costPerHour: Math.round(costPerHour * 100) / 100,
-                eco_mode_enabled: a.eco_mode_enabled,
-            };
-        });
+        .map(toHeavy);
 
-    // Total savings = difference if all heavy appliances ran at cheapest rate
-    // Also accounts for eco mode already being active
+    // Total savings = difference if non-eco heavy appliances ran at cheapest rate
     const totalSavingsPerHour = heavyOn.reduce((sum, a) => {
         const effectivePowerW = a.eco_mode_enabled
             ? a.rated_power_w * (1 - ECO_MODE_REDUCTION)
@@ -314,6 +337,8 @@ export function calculateOptimizationAlert(
         currentSlotType: currentSlot?.slot_type || 'normal',
         currentRate,
         heavyAppliancesOn: heavyOn,
+        heavyAppliancesEcoActive: heavyEcoActive,
+        heavyAppliancesOff: heavyOff,
         totalSavingsPerHour: Math.round(totalSavingsPerHour * 100) / 100,
     };
 }
