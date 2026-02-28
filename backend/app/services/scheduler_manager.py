@@ -163,6 +163,51 @@ async def register_schedule_jobs(
             logger.info(f"[SchedulerManager] Registered cron turn_off at {eh:02d}:{em:02d}")
 
 
+async def cancel_schedule(schedule_id: str) -> bool:
+    """
+    Cancel/delete a schedule:
+      1. Remove APScheduler jobs (on + off).
+      2. Mark DB record is_active = False.
+      3. Reset appliance status if it was SCHEDULED.
+    Returns True on success.
+    """
+    from app.database import get_supabase
+    db = get_supabase()
+
+    # 1. Remove APScheduler jobs
+    job_id_on = f"sched_{schedule_id}_on"
+    job_id_off = f"sched_{schedule_id}_off"
+    if _scheduler is not None:
+        for jid in [job_id_on, job_id_off]:
+            try:
+                _scheduler.remove_job(jid)
+                logger.info(f"[SchedulerManager] Removed job {jid}")
+            except Exception:
+                pass  # job may not exist
+
+    # 2. Deactivate in DB
+    sched_result = db.table("schedules").select("appliance_id").eq("id", schedule_id).limit(1).execute()
+    db.table("schedules").update({
+        "is_active": False,
+        "updated_at": datetime.now().isoformat(),
+    }).eq("id", schedule_id).execute()
+
+    # 3. Reset appliance status from SCHEDULED → OFF if no other active schedules
+    if sched_result.data:
+        appliance_id = sched_result.data[0]["appliance_id"]
+        other_active = db.table("schedules").select("id").eq("appliance_id", appliance_id).eq("is_active", True).neq("id", schedule_id).limit(1).execute()
+        if not other_active.data:
+            # No other active schedules — reset from SCHEDULED to OFF
+            db.table("appliances").update({
+                "status": "OFF",
+                "schedule_time": None,
+                "updated_at": datetime.now().isoformat(),
+            }).eq("id", appliance_id).eq("status", "SCHEDULED").execute()
+
+    logger.info(f"[SchedulerManager] Cancelled schedule {schedule_id}")
+    return True
+
+
 async def _run_schedule_action(schedule_id, appliance_id, action, home_id, user_id):
     """Async wrapper — AsyncIOScheduler runs this directly in the event loop."""
     from app.services.scheduler import execute_schedule_action

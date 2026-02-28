@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Globe, Users, Zap, TrendingDown, TrendingUp, ArrowDownRight, ArrowUpRight, Scale } from 'lucide-react';
+import { Globe, Users, Zap, TrendingDown, TrendingUp, ArrowDownRight, ArrowUpRight, Scale, TreePine, Leaf, Activity } from 'lucide-react';
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { getCarbonDashboard, CarbonDashboardData } from '../services/api';
 import { useApp } from '../contexts/AppContext';
@@ -223,8 +223,80 @@ const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
             </div>
           </div>
 
+          {/* Card 5: Trees Equivalent */}
+          <div className="bg-white p-4 rounded-[2rem] shadow-soft border border-emerald-100 flex flex-col justify-between h-36">
+            <div className="flex items-start justify-between">
+              <div className="w-9 h-9 rounded-2xl bg-emerald-50 flex items-center justify-center">
+                <TreePine className="w-4 h-4 text-emerald-600" />
+              </div>
+              <span className="text-[9px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">Impact</span>
+            </div>
+            <div>
+              <p className="text-[10px] font-medium text-slate-400 mb-0.5">Trees equivalent saved</p>
+              <div className="flex items-baseline gap-1">
+                <span className="text-2xl font-extrabold text-emerald-700">
+                  {loading ? '--' : data?.treesEquivalent ?? 0}
+                </span>
+                <span className="text-[10px] font-semibold text-slate-400">trees/mo</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 6: Carbon Intensity (Live from DB) */}
+          <div className="bg-white p-4 rounded-[2rem] shadow-soft border border-violet-100 flex flex-col justify-between h-36">
+            <div className="flex items-start justify-between">
+              <div className="w-9 h-9 rounded-2xl bg-violet-50 flex items-center justify-center">
+                <Activity className="w-4 h-4 text-violet-600" />
+              </div>
+              <span className="text-[9px] font-semibold text-violet-700 bg-violet-50 px-2 py-0.5 rounded-full">Live</span>
+            </div>
+            <div>
+              <p className="text-[10px] font-medium text-slate-400 mb-0.5">Grid carbon intensity</p>
+              <div className="flex items-center gap-2">
+                <div className="flex flex-col">
+                  <span className="text-[8px] text-rose-500 font-semibold">PEAK</span>
+                  <span className="text-sm font-extrabold text-rose-700">{data?.peakCarbonIntensity ?? '--'}</span>
+                </div>
+                <div className="w-px h-6 bg-slate-200" />
+                <div className="flex flex-col">
+                  <span className="text-[8px] text-emerald-500 font-semibold">OFF-PK</span>
+                  <span className="text-sm font-extrabold text-emerald-700">{data?.offPeakCarbonIntensity ?? '--'}</span>
+                </div>
+                <span className="text-[8px] text-slate-400 self-end">g/kWh</span>
+              </div>
+            </div>
+          </div>
 
         </div>
+
+        {/* ── CO₂ Footprint Reduction (Company Requirement) ────────── */}
+        {data && (
+          <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-[2rem] shadow-soft p-4 sm:p-5 mb-4 sm:mb-6">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-2xl bg-emerald-100 flex items-center justify-center">
+                <Leaf className="w-5 h-5 text-emerald-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-emerald-800 text-sm">Your CO₂ Footprint Reduction</h3>
+                <p className="text-[11px] text-emerald-600/70">Per-household sustainability impact this month</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="bg-white/70 rounded-xl p-3 text-center">
+                <p className="text-xl font-extrabold text-emerald-700">{data.co2AvoidedKg}</p>
+                <p className="text-[9px] text-emerald-600 font-medium">kg CO₂ avoided</p>
+              </div>
+              <div className="bg-white/70 rounded-xl p-3 text-center">
+                <p className="text-xl font-extrabold text-emerald-700">{data.treesEquivalent}</p>
+                <p className="text-[9px] text-emerald-600 font-medium">trees equivalent</p>
+              </div>
+              <div className="bg-white/70 rounded-xl p-3 text-center">
+                <p className="text-xl font-extrabold text-emerald-700">{data.kwhShifted}</p>
+                <p className="text-[9px] text-emerald-600 font-medium">kWh shifted</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Daily CO₂ Trend (Real DB Data) ───────────────────────── */}
         {data && data.trendData.length > 0 && (
@@ -291,7 +363,7 @@ const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
                   <span className="text-sm font-bold text-rose-700">{data.withoutOptimizationKg} kg CO₂</span>
                 </div>
                 <p className="text-[10px] text-rose-500 mt-1 pl-6">
-                  {data.kwhShifted} kWh × 0.90 kg/kWh (peak emission)
+                  {data.kwhShifted} kWh × {data.peakCarbonIntensity ?? 900} gCO₂/kWh (peak grid)
                 </p>
               </div>
 
@@ -305,7 +377,7 @@ const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
                   <span className="text-sm font-bold text-emerald-700">{data.withOptimizationKg} kg CO₂</span>
                 </div>
                 <p className="text-[10px] text-emerald-500 mt-1 pl-6">
-                  {data.kwhShifted} kWh × 0.75 kg/kWh (off-peak emission)
+                  {data.kwhShifted} kWh × {data.offPeakCarbonIntensity ?? 750} gCO₂/kWh (off-peak grid)
                 </p>
               </div>
 

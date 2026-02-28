@@ -119,6 +119,18 @@ export async function createSchedule(
 }
 
 /**
+ * Cancel/delete a schedule — removes APScheduler jobs and deactivates DB record.
+ */
+export async function deleteSchedule(
+    applianceId: string,
+    scheduleId: string,
+): Promise<{ success: boolean; message: string }> {
+    return apiFetch(`/appliances/${applianceId}/schedule/${scheduleId}`, {
+        method: 'DELETE',
+    });
+}
+
+/**
  * Batch turn off multiple heavy appliances (optimizer).
  */
 export async function batchTurnOff(
@@ -155,10 +167,12 @@ export interface AutopilotRule {
 
 export interface AutopilotStatus {
     enabled: boolean;
+    strategy: string;
+    grid_protection_enabled: boolean;
     rules_count: number;
     active_rules: number;
     triggered_rules: number;
-    protected_appliances: number;
+    delegated_devices: number;
     mode: string;
 }
 
@@ -238,4 +252,130 @@ export async function simulateAutopilot(homeId: string): Promise<SimulationResul
     return apiFetch<SimulationResult>(`/autopilot/simulate?home_id=${homeId}`, {
         method: 'POST',
     });
+}
+
+// ── Autopilot V2 API ──────────────────────────────────────────────
+
+export type AutopilotStrategy = 'balanced' | 'max_savings' | 'eco_mode';
+
+export interface PenaltyTimelineEntry {
+    hour: number;
+    penalty: number;
+    cost_component: number;
+    carbon_component: number;
+    label: string;
+    above_threshold: boolean;
+}
+
+export interface CarbonStatus {
+    region_code: string;
+    current_gco2: number;
+    status: string;       // "clean" | "moderate" | "dirty"
+    is_clean_window: boolean;
+    cleanest_hours: number[];
+    daily_avg: number;
+}
+
+export interface DeviceAutopilotConfig {
+    id: string;
+    home_id: string;
+    appliance_id: string;
+    is_delegated: boolean;
+    preferred_action: string;
+    protected_window_start: string | null;
+    protected_window_end: string | null;
+    user_override_active: boolean;
+    last_override_at: string | null;
+    appliances?: {
+        name: string;
+        category: string;
+        status: string;
+        rated_power_w: number;
+    };
+}
+
+export interface GridStatus {
+    grid_protection_enabled: boolean;
+    status: string;
+    frequency_hz?: number;
+    voltage_v?: number;
+    active_events: any[];
+    message?: string;
+}
+
+/** Set the autopilot strategy (balanced / max_savings / eco_mode). */
+export async function setAutopilotStrategy(
+    homeId: string,
+    strategy: AutopilotStrategy,
+): Promise<{ success: boolean; strategy: string }> {
+    return apiFetch('/autopilot/strategy', {
+        method: 'PUT',
+        body: JSON.stringify({ home_id: homeId, strategy }),
+    });
+}
+
+/** Toggle grid protection for a home. */
+export async function toggleGridProtection(
+    homeId: string,
+    enabled: boolean,
+): Promise<{ success: boolean; enabled: boolean }> {
+    return apiFetch('/autopilot/grid-protection', {
+        method: 'PUT',
+        body: JSON.stringify({ home_id: homeId, enabled }),
+    });
+}
+
+/** Get 24-hour penalty timeline. */
+export async function getPenaltyTimeline(
+    homeId: string,
+): Promise<{ home_id: string; strategy: string; timeline: PenaltyTimelineEntry[] }> {
+    return apiFetch(`/autopilot/penalty-timeline?home_id=${homeId}`);
+}
+
+/** Get current carbon intensity status. */
+export async function getCarbonStatus(homeId: string): Promise<CarbonStatus> {
+    return apiFetch<CarbonStatus>(`/autopilot/carbon-now?home_id=${homeId}`);
+}
+
+/** List device autopilot configs for a home. */
+export async function getDeviceConfigs(
+    homeId: string,
+): Promise<{ configs: DeviceAutopilotConfig[] }> {
+    return apiFetch(`/autopilot/device-config?home_id=${homeId}`);
+}
+
+/** Add or update per-device autopilot config. */
+export async function upsertDeviceConfig(config: {
+    home_id: string;
+    appliance_id: string;
+    is_delegated: boolean;
+    preferred_action?: string;
+    protected_window_start?: string | null;
+    protected_window_end?: string | null;
+}): Promise<{ success: boolean; config: DeviceAutopilotConfig }> {
+    return apiFetch('/autopilot/device-config', {
+        method: 'POST',
+        body: JSON.stringify(config),
+    });
+}
+
+/** Record a physical or app-based override. */
+export async function recordOverride(
+    homeId: string,
+    applianceId: string,
+    source: 'physical' | 'app' = 'physical',
+): Promise<{ success: boolean; message: string }> {
+    return apiFetch('/autopilot/override', {
+        method: 'POST',
+        body: JSON.stringify({
+            home_id: homeId,
+            appliance_id: applianceId,
+            override_source: source,
+        }),
+    });
+}
+
+/** Get grid status for the home's DISCOM. */
+export async function getGridStatus(homeId: string): Promise<GridStatus> {
+    return apiFetch<GridStatus>(`/autopilot/grid-status?home_id=${homeId}`);
 }

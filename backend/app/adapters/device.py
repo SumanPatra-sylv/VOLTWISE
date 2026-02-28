@@ -171,3 +171,113 @@ def get_adapter(appliance: dict) -> DeviceAdapter:
     if appliance.get("smart_plug_id"):
         return TuyaAdapter()
     return VirtualAdapter()
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Physical Override Detection
+# ══════════════════════════════════════════════════════════════════════
+
+async def detect_physical_override(appliance_id: str) -> bool:
+    """
+    Detect whether the user physically overrode an autopilot action.
+
+    Logic:
+      1. Check if `device_autopilot_config` exists for this appliance and
+         autopilot had turned it off (autopilot_saved_state row with restored=False).
+      2. Check current power draw from smart plug (Tuya status query) or
+         check if the DB status changed to ON via a non-backend source.
+      3. If the appliance is ON but autopilot turned it OFF, user overrode it.
+
+    Returns True if override detected, False otherwise.
+    """
+    db = get_supabase()
+
+    # 1. Check if there's an un-restored autopilot saved state
+    saved = db.table("autopilot_saved_state").select("id, pre_action_status").eq(
+        "appliance_id", appliance_id
+    ).eq("restored", False).order("saved_at", desc=True).limit(1).execute()
+
+    if not saved.data:
+        return False  # No pending autopilot action → no override possible
+
+    # 2. Check current appliance status
+    appliance_result = db.table("appliances").select("status, smart_plug_id").eq(
+        "id", appliance_id
+    ).limit(1).execute()
+
+    if not appliance_result.data:
+        return False
+
+    appliance = appliance_result.data[0]
+
+    # If autopilot turned it off but it's now ON, override detected
+    if appliance["status"] == "ON":
+        logger.info(f"[OverrideDetect] Physical override detected for {appliance_id}: "
+                    f"autopilot turned OFF but device is ON")
+        # Record the override
+        _record_override(db, appliance_id)
+        return True
+
+    # 3. For smart plug devices: check power draw
+    # If the plug reports >5W power draw but status is OFF, user turned it on physically
+    if appliance.get("smart_plug_id"):
+        power_w = await _check_smart_plug_power(appliance_id)
+        if power_w is not None and power_w > 5.0:
+            logger.info(f"[OverrideDetect] Smart plug power override for {appliance_id}: "
+                       f"{power_w}W detected while status=OFF")
+            # Update status to ON (reflect reality)
+            db.table("appliances").update({
+                "status": "ON",
+                "current_power_w": power_w,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", appliance_id).execute()
+            _record_override(db, appliance_id)
+            return True
+
+    return False
+
+
+def _record_override(db, appliance_id: str) -> None:
+    """Record the override in device_autopilot_config."""
+    now = datetime.now(timezone.utc).isoformat()
+
+    existing = db.table("device_autopilot_config").select("id").eq(
+        "appliance_id", appliance_id
+    ).limit(1).execute()
+
+    if existing.data:
+        db.table("device_autopilot_config").update({
+            "user_override_active": True,
+            "last_override_at": now,
+            "updated_at": now,
+        }).eq("id", existing.data[0]["id"]).execute()
+    else:
+        # Create config with override flag
+        # We need home_id — get it from the appliance
+        app_result = db.table("appliances").select("home_id").eq(
+            "id", appliance_id
+        ).limit(1).execute()
+        if app_result.data:
+            db.table("device_autopilot_config").insert({
+                "home_id": app_result.data[0]["home_id"],
+                "appliance_id": appliance_id,
+                "is_delegated": True,
+                "user_override_active": True,
+                "last_override_at": now,
+            }).execute()
+
+
+async def _check_smart_plug_power(appliance_id: str) -> Optional[float]:
+    """
+    Query smart plug for current power draw.
+    TODO: Replace with real Tuya status query.
+    For PoC, returns None (no power data available).
+    """
+    # Real implementation:
+    # db = get_supabase()
+    # plug = db.table("appliances").select("smart_plugs(tuya_device_id)").eq("id", appliance_id).execute()
+    # if plug.data:
+    #     device_id = plug.data[0]["smart_plugs"]["tuya_device_id"]
+    #     # Query Tuya for status: d.status() → {'cur_power': 1234}  (unit: 0.1W)
+    #     return power_w
+    return None

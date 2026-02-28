@@ -145,23 +145,13 @@ export interface CarbonImpactData {
 }
 
 const REGIONAL_AVERAGE_KWH = 250;
-const CARBON_EMISSION_FACTOR = 0.85; // kg CO2 per kWh (Indian grid)
 const CO2_PER_TREE_PER_MONTH = 1.75; // kg CO2
 
-// ── Emission & Tariff Constants ────────────────────────────────────
-// Emission factors by ToD slot type (India grid — fossil mix varies by time)
-const EMISSION_FACTORS = {
+// ── Emission & Tariff Constants (fallbacks — real data from carbon_intensity_schedule) ──
+const EMISSION_FACTORS_FALLBACK = {
     peak: 0.90,       // kg CO₂/kWh during peak (more thermal plants online)
-    normal: 0.82,     // kg CO₂/kWh during normal hours
     offPeak: 0.75,    // kg CO₂/kWh during off-peak (higher renewables share)
-    blended: 0.85,    // India grid average
-};
-
-// SBPDCL tariff rates (from seed: 04_seed_tariffs.sql)
-const SBPDCL_RATES = {
-    peak: 9.55,       // ₹/kWh (highest_slab_rate × 1.20)
-    normal: 7.42,     // ₹/kWh (lowest_slab_rate × 1.00)
-    offPeak: 6.31,    // ₹/kWh (lowest_slab_rate × 0.85)
+    blended: 0.82,    // India grid average
 };
 
 // ── Carbon Dashboard (Comprehensive) ──────────────────────────────
@@ -172,13 +162,72 @@ export interface CarbonDashboardData {
     monthChangePercent: number;       // (thisMonth - lastMonth) / lastMonth * 100 (DB)
     perCapitaKg: number;              // totalEmittedKg / household_members (DB)
     householdMembers: number;         // from homes table (DB)
-    co2ReducedViaShiftKg: number;     // calculated from monthSavings (DB)
-    kwhShifted: number;               // monthSavings / rate_diff (DB)
-    withoutOptimizationKg: number;    // kwhShifted × peak emission factor
-    withOptimizationKg: number;       // kwhShifted × off-peak emission factor
+    co2ReducedViaShiftKg: number;     // calculated from autopilot/optimization actions
+    kwhShifted: number;               // kWh shifted from peak to off-peak
+    withoutOptimizationKg: number;    // kwhShifted × peak carbon intensity
+    withOptimizationKg: number;       // kwhShifted × off-peak carbon intensity
     co2AvoidedKg: number;             // difference
     monthSavings: number;             // from DB (get_dashboard_stats RPC)
-    trendData: { date: string; carbonKg: number; kwh: number }[];  // daily data from daily_aggregates (DB)
+    peakCarbonIntensity: number;      // gCO₂/kWh from carbon_intensity_schedule
+    offPeakCarbonIntensity: number;   // gCO₂/kWh from carbon_intensity_schedule
+    treesEquivalent: number;          // CO₂ saved → tree equivalents
+    neighborhoodAvgKg: number;        // estimated neighborhood average
+    trendData: { date: string; carbonKg: number; kwh: number }[];
+}
+
+/**
+ * Fetch real carbon intensity data from the carbon_intensity_schedule table.
+ * Returns average peak and off-peak intensities in gCO₂/kWh for the home's region.
+ */
+async function fetchCarbonIntensities(homeId: string): Promise<{ peakAvg: number; offPeakAvg: number; dailyAvg: number }> {
+    try {
+        // Get home's DISCOM → region
+        const { data: homeData } = await supabase
+            .from('homes')
+            .select('discom_id, discoms(state_code)')
+            .eq('id', homeId)
+            .single();
+
+        const stateCode = (homeData as any)?.discoms?.state_code || 'BR';
+        const regionMap: Record<string, string> = { BR: 'IN-BR', GJ: 'IN-GJ' };
+        const regionCode = regionMap[stateCode] || 'IN-BR';
+
+        // Fetch all 24h carbon intensity entries
+        const { data: carbonRows } = await supabase
+            .from('carbon_intensity_schedule')
+            .select('hour, gco2_per_kwh')
+            .eq('region_code', regionCode)
+            .order('hour', { ascending: true });
+
+        if (!carbonRows || carbonRows.length === 0) {
+            return {
+                peakAvg: EMISSION_FACTORS_FALLBACK.peak * 1000,
+                offPeakAvg: EMISSION_FACTORS_FALLBACK.offPeak * 1000,
+                dailyAvg: EMISSION_FACTORS_FALLBACK.blended * 1000,
+            };
+        }
+
+        // Peak hours: 17-22 (5 PM to 10 PM), Off-peak: 0-6 (12 AM to 6 AM)
+        const peakHours = [17, 18, 19, 20, 21, 22];
+        const offPeakHours = [0, 1, 2, 3, 4, 5, 6];
+
+        const peakEntries = carbonRows.filter(r => peakHours.includes(r.hour));
+        const offPeakEntries = carbonRows.filter(r => offPeakHours.includes(r.hour));
+
+        const avg = (arr: typeof carbonRows) => arr.length > 0 ? arr.reduce((s, r) => s + r.gco2_per_kwh, 0) / arr.length : 0;
+
+        return {
+            peakAvg: Math.round(avg(peakEntries)),
+            offPeakAvg: Math.round(avg(offPeakEntries)),
+            dailyAvg: Math.round(avg(carbonRows)),
+        };
+    } catch {
+        return {
+            peakAvg: EMISSION_FACTORS_FALLBACK.peak * 1000,
+            offPeakAvg: EMISSION_FACTORS_FALLBACK.offPeak * 1000,
+            dailyAvg: EMISSION_FACTORS_FALLBACK.blended * 1000,
+        };
+    }
 }
 
 export async function getCarbonDashboard(homeId: string): Promise<CarbonDashboardData | null> {
@@ -188,18 +237,33 @@ export async function getCarbonDashboard(homeId: string): Promise<CarbonDashboar
         const stats = await getDashboardStats(homeId);
         if (!stats) return null;
 
-        // Fetch household_members from homes table
+        // Fetch household_members from profiles (via homes.user_id → profiles.id)
+        // Also fetch tariff_plan_id for savings calculation
         let householdMembers = 4;
+        let tariffPlanId: string | null = null;
         try {
             const { data: homeData } = await supabase
                 .from('homes')
-                .select('household_members')
+                .select('user_id, tariff_plan_id')
                 .eq('id', homeId)
                 .single();
-            if (homeData?.household_members) {
-                householdMembers = homeData.household_members;
+            if (homeData?.user_id) {
+                const { data: profileData } = await supabase
+                    .from('profiles')
+                    .select('household_members')
+                    .eq('id', homeData.user_id)
+                    .single();
+                if (profileData?.household_members) {
+                    householdMembers = profileData.household_members;
+                }
             }
-        } catch { /* use default */ }
+            if (homeData?.tariff_plan_id) tariffPlanId = homeData.tariff_plan_id;
+        } catch { /* use default 4 */ }
+
+        // ── Fetch real carbon intensities from DB ──
+        const carbonIntensities = await fetchCarbonIntensities(homeId);
+        const peakEmission = carbonIntensities.peakAvg / 1000;     // Convert gCO₂/kWh → kgCO₂/kWh
+        const offPeakEmission = carbonIntensities.offPeakAvg / 1000;
 
         // ── Fetch REAL daily data from daily_aggregates (last 30 days) ──
         const thirtyDaysAgo = new Date();
@@ -210,18 +274,18 @@ export async function getCarbonDashboard(homeId: string): Promise<CarbonDashboar
             .from('daily_aggregates')
             .select('date, total_kwh, carbon_kg')
             .eq('home_id', homeId)
-            .is('appliance_id', null)         // whole-home aggregates only
+            .is('appliance_id', null)
             .gte('date', thirtyDaysAgoStr)
             .order('date', { ascending: true });
 
-        // Build trend data from real DB rows
+        // Build trend data
         const trendData = (dailyRows || []).map(row => ({
             date: new Date(row.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
             carbonKg: Math.round(Number(row.carbon_kg || 0) * 100) / 100,
             kwh: Math.round(Number(row.total_kwh || 0) * 100) / 100,
         }));
 
-        // ── This month's totals from REAL DB data ──
+        // ── This month's totals ──
         const firstOfMonth = new Date();
         firstOfMonth.setDate(1);
         const firstOfMonthStr = firstOfMonth.toISOString().split('T')[0];
@@ -253,19 +317,86 @@ export async function getCarbonDashboard(homeId: string): Promise<CarbonDashboar
 
         const perCapitaKg = Math.round((totalEmittedKg / householdMembers) * 10) / 10;
 
-        // Optimization comparison (from monthSavings ₹ — real DB value)
-        const monthSavings = stats.monthSavings || 0;
-        const rateDiff = SBPDCL_RATES.peak - SBPDCL_RATES.offPeak; // 3.24 ₹/kWh
-        const kwhShifted = rateDiff > 0 ? Math.round((monthSavings / rateDiff) * 10) / 10 : 0;
-        const withoutOptimizationKg = Math.round(kwhShifted * EMISSION_FACTORS.peak * 100) / 100;
-        const withOptimizationKg = Math.round(kwhShifted * EMISSION_FACTORS.offPeak * 100) / 100;
+        // ── Fetch tariff rates (always needed for savings calc) ──────
+        let peakRate = 9.55, offPeakRate = 6.31;
+        try {
+            const { data: tariffSlots } = await supabase
+                .from('tariff_slots')
+                .select('slot_type, rate')
+                .eq('plan_id', tariffPlanId ?? '');
+            if (tariffSlots && tariffSlots.length > 0) {
+                const peakSlot = tariffSlots.find((s: any) => s.slot_type === 'peak');
+                const offPeakSlot = tariffSlots.find((s: any) => s.slot_type === 'off-peak');
+                if (peakSlot?.rate) peakRate = peakSlot.rate;
+                if (offPeakSlot?.rate) offPeakRate = offPeakSlot.rate;
+            }
+        } catch { /* use defaults 9.55 / 6.31 */ }
+        const rateDiff = Math.max(0, peakRate - offPeakRate);
+
+        // ── Optimization comparison using REAL carbon intensities ──
+        // Calculate kWh shifted from control_logs (optimizer/autopilot actions)
+        const { data: shiftLogs } = await supabase
+            .from('control_logs')
+            .select('appliance_id, action, created_at, appliances(rated_power_w)')
+            .eq('trigger_source', 'optimizer_batch')
+            .gte('created_at', firstOfMonthStr)
+            .order('created_at', { ascending: true });
+
+        // Estimate kWh shifted: each turn_off during peak saves ~2hr of runtime at rated power
+        let kwhShifted = 0;
+        if (shiftLogs && shiftLogs.length > 0) {
+            kwhShifted = shiftLogs.reduce((sum, log) => {
+                const wattage = (log.appliances as any)?.rated_power_w || 1000;
+                return sum + (wattage / 1000) * 2; // ~2 hours per shift action
+            }, 0);
+            kwhShifted = Math.round(kwhShifted * 10) / 10;
+        }
+
+        // Also account for autopilot-triggered shifts
+        const { data: autopilotLogs } = await supabase
+            .from('control_logs')
+            .select('appliance_id, action, appliances(rated_power_w)')
+            .in('trigger_source', ['autopilot', 'scheduler'])
+            .eq('action', 'turn_off')
+            .gte('created_at', firstOfMonthStr);
+
+        if (autopilotLogs && autopilotLogs.length > 0) {
+            const autopilotKwh = autopilotLogs.reduce((sum, log) => {
+                const wattage = (log.appliances as any)?.rated_power_w || 1000;
+                return sum + (wattage / 1000) * 1.5; // ~1.5 hours per autopilot action
+            }, 0);
+            kwhShifted += Math.round(autopilotKwh * 10) / 10;
+        }
+
+        // Fallback: if no logs yet, estimate from general monthSavings
+        if (kwhShifted === 0 && stats.monthSavings > 0) {
+            kwhShifted = rateDiff > 0 ? Math.round((stats.monthSavings / rateDiff) * 10) / 10 : 0;
+        }
+
+        // ── Tariff savings from load shifting ────────────────────────
+        // "How much money saved?" = kWh shifted × (peak rate − off-peak rate)
+        const shiftingSavingsRs = Math.round(kwhShifted * rateDiff);
+
+        const withoutOptimizationKg = Math.round(kwhShifted * peakEmission * 100) / 100;
+        const withOptimizationKg = Math.round(kwhShifted * offPeakEmission * 100) / 100;
         const co2AvoidedKg = Math.round((withoutOptimizationKg - withOptimizationKg) * 100) / 100;
+
+        // Trees equivalent
+        const treesEquivalent = co2AvoidedKg > 0
+            ? Math.round((co2AvoidedKg / CO2_PER_TREE_PER_MONTH) * 10) / 10
+            : 0;
+
+        // Neighborhood average estimate (regional_avg × random variance)
+        const neighborhoodAvgKg = Math.round(REGIONAL_AVERAGE_KWH * (carbonIntensities.dailyAvg / 1000) * 0.9);
 
         return {
             totalEmittedKg, monthlyKwh: Math.round(monthlyKwh), monthChangePercent,
             perCapitaKg, householdMembers, co2ReducedViaShiftKg: co2AvoidedKg,
             kwhShifted, withoutOptimizationKg, withOptimizationKg, co2AvoidedKg,
-            monthSavings, trendData,
+            monthSavings: shiftingSavingsRs,      // ₹ saved = kwhShifted × (peakRate − offPeakRate)
+            peakCarbonIntensity: carbonIntensities.peakAvg,
+            offPeakCarbonIntensity: carbonIntensities.offPeakAvg,
+            treesEquivalent, neighborhoodAvgKg, trendData,
         };
     } catch (error) {
         console.error('[API] getCarbonDashboard error:', error);
@@ -278,17 +409,14 @@ export async function getCarbonDashboard(homeId: string): Promise<CarbonDashboar
 export async function getCarbonStatsRealData(homeId: string): Promise<CarbonStatsData | null> {
     if (!homeId) return null;
     try {
-        const stats = await getDashboardStats(homeId);
-        if (!stats) return null;
-        const userConsumption = Math.max(1, stats.dailyAvgUsage * 30);
-        const co2Avoided = (REGIONAL_AVERAGE_KWH - userConsumption) * CARBON_EMISSION_FACTOR;
-        const treesSavedPerMonth = Math.abs(co2Avoided) / CO2_PER_TREE_PER_MONTH;
+        const dashboard = await getCarbonDashboard(homeId);
+        if (!dashboard) return null;
         return {
-            user: Math.round(userConsumption),
-            neighbors: 180,
+            user: Math.round(dashboard.monthlyKwh),
+            neighbors: dashboard.neighborhoodAvgKg,
             national: REGIONAL_AVERAGE_KWH,
-            trees: Math.max(0, Math.floor(treesSavedPerMonth / 12)),
-            co2Saved: Math.max(0, Math.round(co2Avoided)),
+            trees: Math.max(0, Math.floor(dashboard.treesEquivalent)),
+            co2Saved: Math.max(0, Math.round(dashboard.co2AvoidedKg)),
         };
     } catch { return null; }
 }

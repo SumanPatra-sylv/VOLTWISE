@@ -1,8 +1,9 @@
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, Settings, Shield, LogOut, ChevronRight, MapPin, Zap, TreePine, Bell, FileText, Plug } from 'lucide-react';
 import { Tab } from '../types';
 import { useApp } from '../contexts/AppContext';
+import { getCarbonDashboard } from '../services/api';
 
 type ViewMode = 'mobile' | 'tablet' | 'web';
 
@@ -26,15 +27,25 @@ const Profile: React.FC<ProfileProps> = ({ viewMode = 'mobile', onNavigate }) =>
     const isCompact = viewMode === 'web' || viewMode === 'tablet';
 
     // Real data from AppContext
-    const { profile, home, meter, signOut } = useApp();
+    const { profile, home, meter, signOut, isAuthReady } = useApp();
     const userName = profile?.name || 'User';
     const initials = getInitials(userName);
     const location = profile?.location || '—';
     const consumerNumber = profile?.consumer_number || '';
 
-    // TODO: wire these to real carbon_stats table later
-    const kwhSaved = 0;
-    const treesPlanted = 0;
+    // Carbon stats — kWh shifted and trees equivalent from Rewards page logic
+    const [kwhSaved, setKwhSaved] = useState<number>(0);
+    const [treesPlanted, setTreesPlanted] = useState<number>(0);
+
+    useEffect(() => {
+        if (!isAuthReady || !home?.id) return;
+        getCarbonDashboard(home.id).then(data => {
+            if (data) {
+                setKwhSaved(data.kwhShifted ?? 0);
+                setTreesPlanted(data.treesEquivalent ?? 0);
+            }
+        }).catch(() => { /* keep zeros on error */ });
+    }, [home?.id, isAuthReady]);
 
     const handleSignOut = async () => {
         try {

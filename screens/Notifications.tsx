@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Bell, BellOff, Clock, Zap, AlertTriangle, Calendar, CheckCircle, Trash2, Settings, ChevronRight, Filter, Volume2, VolumeX } from 'lucide-react';
+import { ArrowLeft, Bell, BellOff, Clock, Zap, AlertTriangle, Calendar, CheckCircle, Trash2, Settings, ChevronRight, Filter, Volume2, VolumeX, Leaf, Shield, Bot } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 type ViewMode = 'mobile' | 'tablet' | 'web';
@@ -11,7 +11,7 @@ interface Props {
 
 interface Notification {
   id: number;
-  type: 'peak' | 'budget' | 'schedule' | 'tip' | 'system';
+  type: 'peak' | 'budget' | 'schedule' | 'tip' | 'system' | 'autopilot' | 'carbon';
   title: string;
   message: string;
   time: string;
@@ -106,12 +106,47 @@ const Notifications: React.FC<Props> = ({ onBack, viewMode = 'mobile' }) => {
       color: 'text-emerald-600',
       bgColor: 'bg-emerald-50',
     },
+    {
+      id: 8,
+      type: 'carbon',
+      title: '🌿 Clean Energy Window',
+      message: 'Grid carbon intensity is low (520 gCO₂/kWh). Run your washing machine now for a lower carbon footprint!',
+      time: '4 hours ago',
+      read: false,
+      icon: <Leaf className="w-5 h-5" />,
+      color: 'text-emerald-600',
+      bgColor: 'bg-green-50',
+    },
+    {
+      id: 9,
+      type: 'tip',
+      title: '💚 Best Time to Run Appliances',
+      message: "It's both cheapest (₹6.31/kWh) AND cleanest (510 gCO₂/kWh) right now — run your heavy appliances to save money and reduce your carbon footprint!",
+      time: '5 hours ago',
+      read: true,
+      icon: <Leaf className="w-5 h-5" />,
+      color: 'text-emerald-600',
+      bgColor: 'bg-emerald-50',
+    },
+    {
+      id: 10,
+      type: 'autopilot',
+      title: '🤖 Autopilot Activated',
+      message: 'Penalty threshold crossed — AC and Geyser turned off by AI (Balanced mode). Override anytime via the app or physical switch.',
+      time: 'Yesterday',
+      read: true,
+      icon: <Bot className="w-5 h-5" />,
+      color: 'text-indigo-600',
+      bgColor: 'bg-indigo-50',
+    },
   ]);
 
   const notificationSettings = [
     { id: 'peak', label: 'Peak Hour Alerts', description: 'Get notified before peak pricing starts', enabled: true },
     { id: 'budget', label: 'Budget Warnings', description: 'Alert when approaching budget limits', enabled: true },
     { id: 'schedule', label: 'Schedule Updates', description: 'Confirm when devices are auto-controlled', enabled: true },
+    { id: 'carbon', label: 'Clean Energy Alerts', description: 'Notify when grid carbon intensity is low', enabled: true },
+    { id: 'autopilot', label: 'Autopilot Actions', description: 'When AI turns devices on/off', enabled: true },
     { id: 'tips', label: 'Saving Tips', description: 'AI-powered energy saving suggestions', enabled: false },
     { id: 'weekly', label: 'Weekly Reports', description: 'Summary of your energy usage', enabled: true },
   ];

@@ -26,7 +26,7 @@ import {
 } from '../utils/tariffOptimizer';
 import InterceptorModal from '../components/InterceptorModal';
 import ScheduleModal from '../components/ScheduleModal';
-import { toggleAppliance as apiToggle, setEcoMode as apiEcoMode, batchTurnOff as apiBatchTurnOff } from '../services/backend';
+import { toggleAppliance as apiToggle, setEcoMode as apiEcoMode, batchTurnOff as apiBatchTurnOff, getCarbonStatus, CarbonStatus } from '../services/backend';
 
 type ViewMode = 'mobile' | 'tablet' | 'web';
 
@@ -75,6 +75,8 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
     const [interceptAppliance, setInterceptAppliance] = useState<DBAppliance | null>(null);
     // ScheduleModal state (off-peak direct scheduling)
     const [scheduleAppliance, setScheduleAppliance] = useState<DBAppliance | null>(null);
+    // Carbon status
+    const [carbonData, setCarbonData] = useState<CarbonStatus | null>(null);
 
     const currentHour = new Date().getHours();
 
@@ -94,6 +96,11 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
             ]);
             setSlots(slotsData);
             setAppliances(appData || []);
+
+            // Fetch carbon status (non-blocking)
+            getCarbonStatus(home.id)
+                .then(res => setCarbonData(res))
+                .catch(() => setCarbonData(null));
         } catch (err) {
             console.error('Optimizer: fetch failed', err);
         } finally {
@@ -264,6 +271,54 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
                         <p className="text-xs text-slate-400 mt-1">₹{alert.currentRate.toFixed(2)}/kWh — wait for off-peak to save more on heavy loads</p>
                     </div>
                 )}
+
+                {/* Clean Energy Banner */}
+                {carbonData && (
+                    <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.2 }}
+                        className={`mt-3 p-4 rounded-2xl shadow-soft border ${
+                            carbonData.is_clean_window
+                                ? isOffPeak
+                                    ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-200'
+                                    : 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-200'
+                                : 'bg-white border-slate-100'
+                        }`}
+                    >
+                        <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                                carbonData.is_clean_window ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-400'
+                            }`}>
+                                <Leaf className="w-5 h-5" />
+                            </div>
+                            <div className="flex-1">
+                                {carbonData.is_clean_window && isOffPeak ? (
+                                    <>
+                                        <p className="text-sm font-bold text-emerald-700">💚 Best Time to Run Appliances</p>
+                                        <p className="text-xs text-emerald-600/80">
+                                            Cheapest (₹{alert.currentRate.toFixed(2)}/kWh) AND cleanest ({carbonData.current_gco2?.toFixed(0)} gCO₂/kWh) right now!
+                                        </p>
+                                    </>
+                                ) : carbonData.is_clean_window ? (
+                                    <>
+                                        <p className="text-sm font-bold text-emerald-700">🌿 Clean Energy Window</p>
+                                        <p className="text-xs text-emerald-600/80">
+                                            Grid carbon: {carbonData.current_gco2?.toFixed(0)} gCO₂/kWh — low carbon footprint right now
+                                        </p>
+                                    </>
+                                ) : (
+                                    <>
+                                        <p className="text-sm font-semibold text-slate-600">Carbon Intensity</p>
+                                        <p className="text-xs text-slate-400">
+                                            {carbonData.current_gco2?.toFixed(0)} gCO₂/kWh · {carbonData.status} · Cleanest hours: {(carbonData.cleanest_hours || []).slice(0, 3).map(h => `${h}:00`).join(', ')}
+                                        </p>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    </motion.div>
+                )}
             </div>
 
             {/* Appliance List */}
@@ -341,14 +396,24 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
                     </>
                 )}
 
-                {/* Off-peak ONLY: show heavy OFF appliances as suggestions to turn on */}
-                {isOffPeak && alert.heavyAppliancesOff.length > 0 && (
+                {/* Off-peak OR clean energy window: show heavy OFF appliances as suggestions to turn on */}
+                {(isOffPeak || carbonData?.is_clean_window) && alert.heavyAppliancesOff.length > 0 && (
                     <>
                         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1 mt-6">
-                            💡 Suggested — Run Now at Low Rate
+                            {isOffPeak && carbonData?.is_clean_window
+                                ? '💚 Best Time — Cheapest & Cleanest'
+                                : carbonData?.is_clean_window
+                                    ? '🌿 Suggested — Cleanest Grid Hours'
+                                    : '💡 Suggested — Run Now at Low Rate'
+                            }
                         </h3>
                         <p className="text-xs text-slate-400 px-1 mb-2">
-                            These heavy appliances are OFF. Run them now at ₹{alert.currentRate.toFixed(2)}/kWh to save money.
+                            {isOffPeak && carbonData?.is_clean_window
+                                ? `These heavy appliances are OFF. Run them now at ₹${alert.currentRate.toFixed(2)}/kWh — it's both cheapest and cleanest (${carbonData.current_gco2?.toFixed(0)} gCO₂/kWh)!`
+                                : carbonData?.is_clean_window
+                                    ? `Grid carbon intensity is low (${carbonData.current_gco2?.toFixed(0)} gCO₂/kWh). Run these now to reduce your carbon footprint.`
+                                    : `These heavy appliances are OFF. Run them now at ₹${alert.currentRate.toFixed(2)}/kWh to save money.`
+                            }
                         </p>
                         {alert.heavyAppliancesOff.map((a, i) => {
                             const fullAppliance = appliances.find(ap => ap.id === a.id);

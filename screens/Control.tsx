@@ -2,20 +2,24 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Power, Bot, Sliders, Settings2, Zap, Plus, Trash2, Clock, Wifi, WifiOff,
   X, Check, ChevronDown, AlertCircle, Calendar, Loader2, Edit2, ToggleRight,
-  Shield, Play, Pause
+  Shield, Play, Pause, Leaf, DollarSign, Scale, Activity, ChevronRight, Eye
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useApp } from '../contexts/AppContext';
 import { supabase } from '../services/supabase';
-import { DBAppliance, DBTariffSlot, ApplianceCategory } from '../types/database';
+import { DBAppliance, DBTariffSlot, ApplianceCategory, AutopilotStrategy } from '../types/database';
 import InterceptorModal from '../components/InterceptorModal';
 import ScheduleModal from '../components/ScheduleModal';
 import { shouldIntercept, fetchUserTariffSlots, calculateCostForTime, getSlotForHour, formatHour } from '../utils/tariffOptimizer';
-import { toggleAppliance as apiToggle, setEcoMode as apiEcoMode } from '../services/backend';
+import { toggleAppliance as apiToggle, setEcoMode as apiEcoMode, deleteSchedule as apiDeleteSchedule } from '../services/backend';
 import {
   getAutopilotStatus, getAutopilotRules, createAutopilotRule, updateAutopilotRule,
   deleteAutopilotRule, toggleAutopilot, simulateAutopilot,
-  AutopilotRule, AutopilotStatus as APStatus, SimulationResult
+  setAutopilotStrategy, toggleGridProtection, getPenaltyTimeline, getCarbonStatus,
+  getDeviceConfigs, upsertDeviceConfig, recordOverride,
+  AutopilotRule, AutopilotStatus as APStatus, SimulationResult,
+  PenaltyTimelineEntry, CarbonStatus as CarbonStatusType, DeviceAutopilotConfig,
+  AutopilotStrategy as APStrategy,
 } from '../services/backend';
 
 type ViewMode = 'mobile' | 'tablet' | 'web';
@@ -73,6 +77,10 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
   const [autopilotRules, setAutopilotRules] = useState<AutopilotRule[]>([]);
   const [autopilotLoading, setAutopilotLoading] = useState(false);
   const [simulation, setSimulation] = useState<SimulationResult | null>(null);
+  // V2 autopilot state
+  const [deviceConfigs, setDeviceConfigs] = useState<DeviceAutopilotConfig[]>([]);
+  const [penaltyTimeline, setPenaltyTimeline] = useState<PenaltyTimelineEntry[]>([]);
+  const [carbonStatus, setCarbonStatus] = useState<CarbonStatusType | null>(null);
 
   const isWeb = viewMode === 'web';
   const isTablet = viewMode === 'tablet';
@@ -128,16 +136,26 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
     }
   }, [home?.id]);
 
-  // Fetch autopilot status + rules
+  // Fetch autopilot status + rules + V2 data
   const fetchAutopilot = useCallback(async () => {
     if (!home?.id) return;
     try {
-      const [status, rules] = await Promise.all([
+      const [status, rules, configsRes] = await Promise.all([
         getAutopilotStatus(home.id),
         getAutopilotRules(home.id),
+        getDeviceConfigs(home.id).catch(() => ({ configs: [] })),
       ]);
       setAutopilotStatus(status);
       setAutopilotRules(rules);
+      setDeviceConfigs(configsRes.configs || []);
+
+      // Fetch penalty timeline + carbon (non-blocking)
+      getPenaltyTimeline(home.id)
+        .then(res => setPenaltyTimeline(res.timeline || []))
+        .catch(() => setPenaltyTimeline([]));
+      getCarbonStatus(home.id)
+        .then(res => setCarbonStatus(res))
+        .catch(() => setCarbonStatus(null));
     } catch (err) {
       console.error('Failed to fetch autopilot data:', err);
     }
@@ -247,6 +265,19 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
     }
   };
 
+  const deleteScheduleHandler = async (scheduleId: string, applianceId: string) => {
+    setActionLoading(scheduleId);
+    try {
+      await apiDeleteSchedule(applianceId, scheduleId);
+      setSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, is_active: false } : s));
+      fetchAppliances(); // refresh appliance status (SCHEDULED → OFF)
+    } catch (err) {
+      console.error('Failed to delete schedule:', err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const getCostPerHour = (ratedPowerW: number) => (ratedPowerW / 1000) * currentSlotRate;
 
   return (
@@ -284,8 +315,9 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
               homeId={home?.id || ''}
               appliances={appliances}
               status={autopilotStatus}
-              rules={autopilotRules}
-              simulation={simulation}
+              deviceConfigs={deviceConfigs}
+              penaltyTimeline={penaltyTimeline}
+              carbonStatus={carbonStatus}
               loading={autopilotLoading}
               compact={isCompact}
               onToggle={async (enabled) => {
@@ -297,30 +329,23 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
                 } catch (err) { console.error(err); }
                 finally { setAutopilotLoading(false); }
               }}
-              onSimulate={async () => {
+              onSetStrategy={async (strategy) => {
                 if (!home?.id) return;
-                setAutopilotLoading(true);
                 try {
-                  const res = await simulateAutopilot(home.id);
-                  setSimulation(res);
-                } catch (err) { console.error(err); }
-                finally { setAutopilotLoading(false); }
-              }}
-              onCreateRule={async (rule) => {
-                try {
-                  await createAutopilotRule(rule);
+                  await setAutopilotStrategy(home.id, strategy);
                   await fetchAutopilot();
                 } catch (err) { console.error(err); }
               }}
-              onToggleRule={async (ruleId, active) => {
+              onToggleGridProtection={async (enabled) => {
+                if (!home?.id) return;
                 try {
-                  await updateAutopilotRule(ruleId, { is_active: active });
+                  await toggleGridProtection(home.id, enabled);
                   await fetchAutopilot();
                 } catch (err) { console.error(err); }
               }}
-              onDeleteRule={async (ruleId) => {
+              onUpsertDeviceConfig={async (config) => {
                 try {
-                  await deleteAutopilotRule(ruleId);
+                  await upsertDeviceConfig(config);
                   await fetchAutopilot();
                 } catch (err) { console.error(err); }
               }}
@@ -429,12 +454,12 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
 
                   return (
                     <div key={schedule.id} className={`bg-white border shadow-soft flex items-center justify-between ${isCompact ? 'rounded-xl p-3' : 'rounded-2xl p-4'} ${isCompleted ? 'opacity-50 border-slate-100' : isRunning ? 'border-cyan-200' : 'border-slate-100'}`}>
-                      <div className="flex items-center gap-3">
-                        <div className={`rounded-xl flex items-center justify-center ${isCompact ? 'w-8 h-8' : 'w-10 h-10'} ${isRunning ? 'bg-cyan-100 text-cyan-600' : isCompleted ? 'bg-slate-100 text-slate-400' : 'bg-indigo-50 text-indigo-600'}`}>
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                        <div className={`rounded-xl flex items-center justify-center flex-shrink-0 ${isCompact ? 'w-8 h-8' : 'w-10 h-10'} ${isRunning ? 'bg-cyan-100 text-cyan-600' : isCompleted ? 'bg-slate-100 text-slate-400' : 'bg-indigo-50 text-indigo-600'}`}>
                           <Clock className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
                         </div>
-                        <div>
-                          <p className={`font-bold text-slate-800 ${isCompact ? 'text-xs' : 'text-sm'}`}>
+                        <div className="min-w-0">
+                          <p className={`font-bold text-slate-800 truncate ${isCompact ? 'text-xs' : 'text-sm'}`}>
                             {app?.name || 'Unknown'} at {startTimeDisplay}
                             {endTimeDisplay ? ` · until ${endTimeDisplay}` : ''}
                           </p>
@@ -446,8 +471,24 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
                           </p>
                         </div>
                       </div>
-                      <div className={`px-2 py-1 rounded-lg font-bold ${isRunning ? 'bg-cyan-50 text-cyan-600' : schedule.is_active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'} ${isCompact ? 'text-[9px]' : 'text-xs'}`}>
-                        {isRunning ? 'Running' : schedule.is_active ? 'Active' : 'Done'}
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <div className={`px-2 py-1 rounded-lg font-bold ${isRunning ? 'bg-cyan-50 text-cyan-600' : schedule.is_active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'} ${isCompact ? 'text-[9px]' : 'text-xs'}`}>
+                          {isRunning ? 'Running' : schedule.is_active ? 'Active' : 'Done'}
+                        </div>
+                        {schedule.is_active && (
+                          <button
+                            onClick={() => deleteScheduleHandler(schedule.id, schedule.appliance_id)}
+                            disabled={actionLoading === schedule.id}
+                            className={`rounded-lg border border-rose-200 bg-rose-50 text-rose-500 hover:bg-rose-100 transition-colors flex items-center justify-center ${isCompact ? 'w-7 h-7' : 'w-8 h-8'}`}
+                            title="Cancel schedule"
+                          >
+                            {actionLoading === schedule.id ? (
+                              <Loader2 className={`animate-spin ${isCompact ? 'w-3 h-3' : 'w-3.5 h-3.5'}`} />
+                            ) : (
+                              <X className={isCompact ? 'w-3 h-3' : 'w-3.5 h-3.5'} />
+                            )}
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -569,21 +610,34 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
   );
 };
 
-// ── Autopilot Panel ────────────────────────────────────────────────
+// ── Autopilot Panel (V2) ───────────────────────────────────────────
 interface AutopilotPanelProps {
   homeId: string;
   appliances: DBAppliance[];
   status: APStatus | null;
-  rules: AutopilotRule[];
-  simulation: SimulationResult | null;
+  deviceConfigs: DeviceAutopilotConfig[];
+  penaltyTimeline: PenaltyTimelineEntry[];
+  carbonStatus: CarbonStatusType | null;
   loading: boolean;
   compact: boolean;
   onToggle: (enabled: boolean) => void;
-  onSimulate: () => void;
-  onCreateRule: (rule: any) => void;
-  onToggleRule: (ruleId: string, active: boolean) => void;
-  onDeleteRule: (ruleId: string) => void;
+  onSetStrategy: (strategy: APStrategy) => void;
+  onToggleGridProtection: (enabled: boolean) => void;
+  onUpsertDeviceConfig: (config: {
+    home_id: string;
+    appliance_id: string;
+    is_delegated: boolean;
+    preferred_action?: string;
+    protected_window_start?: string | null;
+    protected_window_end?: string | null;
+  }) => void;
 }
+
+const STRATEGY_OPTIONS: { key: APStrategy; label: string; desc: string; icon: React.ReactNode; color: string; bg: string }[] = [
+  { key: 'balanced', label: 'Balanced', desc: '70% cost · 30% carbon', icon: <Scale className="w-4 h-4" />, color: 'text-indigo-600', bg: 'bg-indigo-50 border-indigo-200' },
+  { key: 'max_savings', label: 'Max Savings', desc: 'Lowest electricity bill', icon: <DollarSign className="w-4 h-4" />, color: 'text-amber-600', bg: 'bg-amber-50 border-amber-200' },
+  { key: 'eco_mode', label: 'Eco Mode', desc: 'Lowest carbon footprint', icon: <Leaf className="w-4 h-4" />, color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' },
+];
 
 const ACTION_LABELS: Record<string, string> = {
   turn_off: 'Turn Off',
@@ -591,34 +645,31 @@ const ACTION_LABELS: Record<string, string> = {
   reduce_power: 'Reduce Power',
 };
 
+const PENALTY_COLORS: Record<string, string> = {
+  Excellent: 'text-emerald-600 bg-emerald-50',
+  Good: 'text-teal-600 bg-teal-50',
+  Fair: 'text-amber-600 bg-amber-50',
+  High: 'text-orange-600 bg-orange-50',
+  Critical: 'text-rose-600 bg-rose-50',
+};
+
 const AutopilotPanel: React.FC<AutopilotPanelProps> = ({
-  homeId, appliances, status, rules, simulation, loading, compact,
-  onToggle, onSimulate, onCreateRule, onToggleRule, onDeleteRule,
+  homeId, appliances, status, deviceConfigs, penaltyTimeline, carbonStatus,
+  loading, compact, onToggle, onSetStrategy, onToggleGridProtection, onUpsertDeviceConfig,
 }) => {
   const enabled = status?.enabled ?? false;
-  const [showAddRule, setShowAddRule] = useState(false);
-  const [newRuleName, setNewRuleName] = useState('');
-  const [newRuleAction, setNewRuleAction] = useState('turn_off');
-  const [selectedApplianceIds, setSelectedApplianceIds] = useState<string[]>([]);
+  const strategy = (status?.strategy || 'balanced') as APStrategy;
+  const gridProtection = status?.grid_protection_enabled ?? false;
+  const [expandedDevice, setExpandedDevice] = useState<string | null>(null);
+  const [showDelegatePanel, setShowDelegatePanel] = useState(false);
 
   const controllable = appliances.filter(a => a.is_controllable);
+  const delegatedIds = new Set(deviceConfigs.filter(c => c.is_delegated).map(c => c.appliance_id));
+  const delegatedCount = delegatedIds.size;
 
-  const handleCreateRule = () => {
-    if (!newRuleName.trim() || selectedApplianceIds.length === 0) return;
-    onCreateRule({
-      home_id: homeId,
-      name: newRuleName.trim(),
-      description: `${ACTION_LABELS[newRuleAction]} selected appliances during peak tariff`,
-      condition_type: 'peak_tariff',
-      condition_value: { min_rate: 9.0 },
-      target_appliance_ids: selectedApplianceIds,
-      action: newRuleAction,
-    });
-    setShowAddRule(false);
-    setNewRuleName('');
-    setNewRuleAction('turn_off');
-    setSelectedApplianceIds([]);
-  };
+  // Find current hour penalty
+  const currentHour = new Date().getHours();
+  const currentPenalty = penaltyTimeline.find(t => t.hour === currentHour);
 
   return (
     <div className={`space-y-3 ${compact ? 'mb-4' : 'mb-6'}`}>
@@ -628,12 +679,12 @@ const AutopilotPanel: React.FC<AutopilotPanelProps> = ({
           <div className={`rounded-full ${enabled ? 'bg-emerald-400 animate-pulse shadow-glow' : 'bg-slate-300'} ${compact ? 'w-2 h-2' : 'w-3 h-3'}`} />
           <div>
             <h4 className={`font-bold ${enabled ? 'text-emerald-800' : 'text-slate-600'} ${compact ? 'text-xs' : 'text-sm'}`}>
-              {enabled ? 'Peak Optimization Active' : 'Autopilot Disabled'}
+              {enabled ? 'AI Autopilot Active' : 'Autopilot Disabled'}
             </h4>
             <p className={`${enabled ? 'text-emerald-700/70' : 'text-slate-400'} ${compact ? 'text-[10px]' : 'text-xs'}`}>
               {enabled
-                ? `${status?.protected_appliances || 0} appliance(s) protected · ${status?.active_rules || 0} rule(s)`
-                : 'Enable to auto-manage appliances during peak tariff'
+                ? `${delegatedCount} device(s) delegated · ${STRATEGY_OPTIONS.find(s => s.key === strategy)?.label} mode`
+                : 'Enable to let AI optimize your energy usage'
               }
             </p>
           </div>
@@ -649,155 +700,280 @@ const AutopilotPanel: React.FC<AutopilotPanelProps> = ({
 
       {enabled && (
         <>
-          {/* Active Rules */}
-          {rules.length > 0 && (
-            <div className="space-y-2">
-              {rules.map(rule => {
-                const targetApps = appliances.filter(a => (rule.target_appliance_ids || []).includes(a.id));
+          {/* Grid Protection */}
+          <div className={`bg-white border ${gridProtection ? 'border-violet-200' : 'border-slate-100'} shadow-soft flex items-center justify-between ${compact ? 'p-3 rounded-xl' : 'p-4 rounded-2xl'}`}>
+            <div className="flex items-center gap-3">
+              <div className={`rounded-xl flex items-center justify-center ${compact ? 'w-8 h-8' : 'w-10 h-10'} ${gridProtection ? 'bg-violet-100 text-violet-600' : 'bg-slate-100 text-slate-400'}`}>
+                <Shield className={compact ? 'w-4 h-4' : 'w-5 h-5'} />
+              </div>
+              <div>
+                <p className={`font-bold ${gridProtection ? 'text-violet-800' : 'text-slate-600'} ${compact ? 'text-xs' : 'text-sm'}`}>Grid Protection</p>
+                <p className={`${gridProtection ? 'text-violet-600/70' : 'text-slate-400'} ${compact ? 'text-[10px]' : 'text-xs'}`}>
+                  {gridProtection ? 'Auto-respond to grid emergencies' : 'Off — enable for DISCOM event response'}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => onToggleGridProtection(!gridProtection)}
+              className={`${compact ? 'w-10 h-6' : 'w-12 h-7'} rounded-full transition-all flex-shrink-0 ${gridProtection ? 'bg-violet-500' : 'bg-slate-300'}`}
+            >
+              <div className={`${compact ? 'w-4 h-4' : 'w-5 h-5'} bg-white rounded-full shadow transition-transform ${gridProtection ? (compact ? 'translate-x-5' : 'translate-x-6') : 'translate-x-1'}`} />
+            </button>
+          </div>
+
+          {/* Strategy Selector */}
+          <div>
+            <p className={`font-bold text-slate-700 mb-2 ${compact ? 'text-xs px-1' : 'text-sm px-1'}`}>Optimization Goal</p>
+            <div className={`grid gap-2 ${compact ? 'grid-cols-3' : 'grid-cols-3'}`}>
+              {STRATEGY_OPTIONS.map(opt => {
+                const isActive = strategy === opt.key;
                 return (
-                  <div key={rule.id} className={`bg-white border shadow-soft flex flex-col ${compact ? 'rounded-xl p-3' : 'rounded-2xl p-4'} ${rule.is_triggered ? 'border-amber-200' : 'border-slate-100'}`}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className={`rounded-lg flex items-center justify-center ${compact ? 'w-7 h-7' : 'w-9 h-9'} ${rule.is_triggered ? 'bg-amber-100 text-amber-600' : 'bg-indigo-50 text-indigo-600'}`}>
-                          <Shield className={compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} />
-                        </div>
-                        <div>
-                          <p className={`font-bold text-slate-800 ${compact ? 'text-xs' : 'text-sm'}`}>{rule.name}</p>
-                          <p className={`text-slate-400 ${compact ? 'text-[10px]' : 'text-xs'}`}>
-                            {ACTION_LABELS[rule.action] || rule.action} · {targetApps.length} appliance(s)
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className={`px-2 py-0.5 rounded-lg font-bold ${rule.is_triggered ? 'bg-amber-50 text-amber-600' : rule.is_active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'} ${compact ? 'text-[8px]' : 'text-[10px]'}`}>
-                          {rule.is_triggered ? 'Triggered' : rule.is_active ? 'Ready' : 'Paused'}
-                        </span>
-                        <button onClick={() => onToggleRule(rule.id, !rule.is_active)} className="p-1 rounded hover:bg-slate-100">
-                          {rule.is_active ? <Pause className="w-3 h-3 text-slate-400" /> : <Play className="w-3 h-3 text-slate-400" />}
-                        </button>
-                        <button onClick={() => onDeleteRule(rule.id)} className="p-1 rounded hover:bg-rose-50">
-                          <Trash2 className="w-3 h-3 text-slate-400 hover:text-rose-500" />
-                        </button>
-                      </div>
+                  <button
+                    key={opt.key}
+                    onClick={() => onSetStrategy(opt.key)}
+                    className={`border flex flex-col items-center gap-1.5 transition-all ${compact ? 'p-2.5 rounded-xl' : 'p-3.5 rounded-2xl'} ${isActive ? `${opt.bg} border-2` : 'bg-white border-slate-100 hover:border-slate-200'}`}
+                  >
+                    <div className={`rounded-lg flex items-center justify-center ${compact ? 'w-7 h-7' : 'w-9 h-9'} ${isActive ? opt.color : 'text-slate-400'} ${isActive ? '' : 'bg-slate-50'}`}>
+                      {opt.icon}
                     </div>
-                    {targetApps.length > 0 && (
-                      <div className={`flex flex-wrap gap-1 mt-2 ${compact ? 'pl-9' : 'pl-11'}`}>
-                        {targetApps.map(a => (
-                          <span key={a.id} className={`bg-slate-100 text-slate-600 rounded-md font-medium ${compact ? 'text-[8px] px-1.5 py-0.5' : 'text-[10px] px-2 py-0.5'}`}>
-                            {a.name}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                    <span className={`font-bold ${isActive ? opt.color : 'text-slate-600'} ${compact ? 'text-[10px]' : 'text-xs'}`}>{opt.label}</span>
+                    <span className={`text-center leading-tight ${compact ? 'text-[8px]' : 'text-[10px]'} ${isActive ? opt.color + '/70' : 'text-slate-400'}`}>{opt.desc}</span>
+                  </button>
                 );
               })}
             </div>
-          )}
+          </div>
 
-          {/* Add Rule */}
-          {!showAddRule ? (
-            <button
-              onClick={() => setShowAddRule(true)}
-              className={`w-full border-2 border-dashed border-slate-200 text-slate-400 font-bold flex items-center justify-center gap-2 hover:border-primary hover:text-primary transition-colors ${compact ? 'rounded-xl py-2 text-xs' : 'rounded-2xl py-3 text-sm'}`}
-            >
-              <Plus className={compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} /> Add Peak Rule
-            </button>
-          ) : (
-            <div className={`bg-white border border-slate-200 shadow-soft ${compact ? 'rounded-xl p-3' : 'rounded-2xl p-4'}`}>
-              <div className="space-y-3">
-                <input
-                  type="text"
-                  value={newRuleName}
-                  onChange={e => setNewRuleName(e.target.value)}
-                  placeholder="Rule name (e.g. Peak Saver)"
-                  className={`w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/50 ${compact ? 'text-xs' : 'text-sm'}`}
-                />
-
-                <div>
-                  <label className={`block font-medium text-slate-600 mb-1 ${compact ? 'text-[10px]' : 'text-xs'}`}>Action during peak</label>
-                  <div className="flex gap-2">
-                    {(['turn_off', 'eco_mode'] as const).map(act => (
-                      <button
-                        key={act}
-                        onClick={() => setNewRuleAction(act)}
-                        className={`flex-1 py-2 rounded-xl border font-bold transition-all ${compact ? 'text-[10px]' : 'text-xs'} ${newRuleAction === act ? 'border-primary bg-primary/5 text-primary' : 'border-slate-200 text-slate-500'}`}
-                      >
-                        {ACTION_LABELS[act]}
-                      </button>
-                    ))}
-                  </div>
+          {/* Current Status Cards */}
+          <div className="grid grid-cols-2 gap-2">
+            {/* Penalty Now */}
+            {currentPenalty && (
+              <div className={`bg-white border border-slate-100 shadow-soft ${compact ? 'p-3 rounded-xl' : 'p-4 rounded-2xl'}`}>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Activity className={`${compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} text-slate-400`} />
+                  <span className={`font-medium text-slate-500 ${compact ? 'text-[10px]' : 'text-xs'}`}>Penalty Now</span>
                 </div>
-
-                <div>
-                  <label className={`block font-medium text-slate-600 mb-1 ${compact ? 'text-[10px]' : 'text-xs'}`}>Select appliances</label>
-                  <div className={`flex flex-wrap gap-1.5`}>
-                    {controllable.map(a => {
-                      const selected = selectedApplianceIds.includes(a.id);
-                      return (
-                        <button
-                          key={a.id}
-                          onClick={() => setSelectedApplianceIds(prev =>
-                            selected ? prev.filter(id => id !== a.id) : [...prev, a.id]
-                          )}
-                          className={`px-2.5 py-1.5 rounded-xl border font-medium transition-all ${compact ? 'text-[10px]' : 'text-xs'} ${selected ? 'border-primary bg-primary/10 text-primary' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}
-                        >
-                          {selected && <Check className="w-3 h-3 inline mr-1" />}
-                          {a.name}
-                        </button>
-                      );
-                    })}
-                  </div>
+                <div className="flex items-baseline gap-2">
+                  <span className={`font-extrabold ${compact ? 'text-lg' : 'text-xl'} text-slate-800`}>{(currentPenalty.penalty * 100).toFixed(0)}%</span>
+                  <span className={`font-bold rounded-md px-1.5 py-0.5 ${PENALTY_COLORS[currentPenalty.label] || 'text-slate-600 bg-slate-100'} ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
+                    {currentPenalty.label}
+                  </span>
                 </div>
+              </div>
+            )}
 
-                <div className="flex gap-2">
-                  <button onClick={() => setShowAddRule(false)} className={`flex-1 py-2 rounded-xl border border-slate-200 font-bold text-slate-500 ${compact ? 'text-xs' : 'text-sm'}`}>Cancel</button>
-                  <button
-                    onClick={handleCreateRule}
-                    disabled={!newRuleName.trim() || selectedApplianceIds.length === 0}
-                    className={`flex-1 py-2 rounded-xl bg-primary text-white font-bold disabled:opacity-40 ${compact ? 'text-xs' : 'text-sm'}`}
-                  >
-                    Create Rule
-                  </button>
+            {/* Carbon Now */}
+            {carbonStatus && (
+              <div className={`bg-white border border-slate-100 shadow-soft ${compact ? 'p-3 rounded-xl' : 'p-4 rounded-2xl'}`}>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Leaf className={`${compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} ${carbonStatus.is_clean_window ? 'text-emerald-500' : 'text-slate-400'}`} />
+                  <span className={`font-medium text-slate-500 ${compact ? 'text-[10px]' : 'text-xs'}`}>Carbon Now</span>
                 </div>
+                <div className="flex items-baseline gap-2">
+                  <span className={`font-extrabold ${compact ? 'text-lg' : 'text-xl'} ${carbonStatus.is_clean_window ? 'text-emerald-600' : 'text-slate-800'}`}>
+                    {carbonStatus.current_gco2?.toFixed(0)}
+                  </span>
+                  <span className={`font-medium ${compact ? 'text-[9px]' : 'text-[10px]'} text-slate-400`}>gCO₂/kWh</span>
+                </div>
+                {carbonStatus.is_clean_window && (
+                  <p className={`text-emerald-600 font-medium mt-1 ${compact ? 'text-[9px]' : 'text-[10px]'}`}>🌿 Clean window</p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Penalty Timeline Mini Chart */}
+          {penaltyTimeline.length > 0 && (
+            <div className={`bg-white border border-slate-100 shadow-soft ${compact ? 'p-3 rounded-xl' : 'p-4 rounded-2xl'}`}>
+              <p className={`font-bold text-slate-700 mb-2 ${compact ? 'text-xs' : 'text-sm'}`}>24h Penalty Timeline</p>
+              <div className="flex items-end gap-[2px] h-12">
+                {penaltyTimeline.map((t, i) => {
+                  const height = Math.max(4, t.penalty * 48);
+                  const isCurrent = t.hour === currentHour;
+                  let barColor = 'bg-emerald-400';
+                  if (t.penalty >= 0.8) barColor = 'bg-rose-500';
+                  else if (t.penalty >= 0.6) barColor = 'bg-orange-400';
+                  else if (t.penalty >= 0.5) barColor = 'bg-amber-400';
+                  else if (t.penalty >= 0.3) barColor = 'bg-teal-400';
+                  return (
+                    <div key={i} className="flex-1 flex flex-col items-center justify-end">
+                      <div
+                        className={`w-full rounded-sm transition-all ${barColor} ${isCurrent ? 'ring-2 ring-slate-800 ring-offset-1' : ''}`}
+                        style={{ height: `${height}px` }}
+                        title={`${t.hour}:00 — ${(t.penalty * 100).toFixed(0)}% (${t.label})`}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex justify-between mt-1">
+                <span className={`text-slate-400 ${compact ? 'text-[8px]' : 'text-[9px]'}`}>12AM</span>
+                <span className={`text-slate-400 ${compact ? 'text-[8px]' : 'text-[9px]'}`}>6AM</span>
+                <span className={`text-slate-400 ${compact ? 'text-[8px]' : 'text-[9px]'}`}>12PM</span>
+                <span className={`text-slate-400 ${compact ? 'text-[8px]' : 'text-[9px]'}`}>6PM</span>
+                <span className={`text-slate-400 ${compact ? 'text-[8px]' : 'text-[9px]'}`}>12AM</span>
               </div>
             </div>
           )}
 
-          {/* Simulate button */}
-          <button
-            onClick={onSimulate}
-            disabled={loading}
-            className={`w-full bg-indigo-50 border border-indigo-100 text-indigo-600 font-bold flex items-center justify-center gap-2 hover:bg-indigo-100 transition-colors ${compact ? 'rounded-xl py-2 text-xs' : 'rounded-2xl py-3 text-sm'}`}
-          >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-            Simulate Peak
-          </button>
-
-          {/* Simulation result */}
-          {simulation && (
-            <div className={`bg-indigo-50 border border-indigo-100 ${compact ? 'rounded-xl p-3' : 'rounded-2xl p-4'}`}>
-              <p className={`font-bold text-indigo-800 mb-2 ${compact ? 'text-xs' : 'text-sm'}`}>
-                Simulation: {simulation.message}
+          {/* Delegated Devices */}
+          <div>
+            <div className="flex items-center justify-between mb-2 px-1">
+              <p className={`font-bold text-slate-700 ${compact ? 'text-xs' : 'text-sm'}`}>
+                Delegated Devices ({delegatedCount})
               </p>
-              {simulation.would_affect.length > 0 ? (
-                <div className="space-y-1">
-                  {simulation.would_affect.map((item, i) => (
-                    <div key={i} className={`flex justify-between items-center ${compact ? 'text-[10px]' : 'text-xs'}`}>
-                      <span className="text-indigo-700">{item.name} → {ACTION_LABELS[item.action] || item.action}</span>
-                      <span className="text-indigo-500 font-medium">saves ₹{item.hourly_savings}/hr</span>
-                    </div>
-                  ))}
-                  <div className={`border-t border-indigo-200 pt-1 mt-1 flex justify-between font-bold text-indigo-800 ${compact ? 'text-[10px]' : 'text-xs'}`}>
-                    <span>Total savings</span>
-                    <span>₹{simulation.total_savings_estimate}/hr</span>
-                  </div>
-                </div>
-              ) : (
-                <p className={`text-indigo-600 ${compact ? 'text-[10px]' : 'text-xs'}`}>No appliances currently ON that would be affected.</p>
-              )}
+              <button
+                onClick={() => setShowDelegatePanel(!showDelegatePanel)}
+                className={`flex items-center gap-1 text-primary font-bold ${compact ? 'text-[10px]' : 'text-xs'}`}
+              >
+                <Plus className="w-3 h-3" /> Manage
+              </button>
             </div>
-          )}
+
+            {/* Quick list of delegated devices */}
+            {delegatedCount > 0 && !showDelegatePanel && (
+              <div className="space-y-1.5">
+                {deviceConfigs.filter(c => c.is_delegated).map(config => {
+                  const appName = config.appliances?.name || appliances.find(a => a.id === config.appliance_id)?.name || 'Unknown';
+                  const isExpanded = expandedDevice === config.appliance_id;
+                  return (
+                    <div key={config.id} className={`bg-white border border-slate-100 shadow-soft overflow-hidden ${compact ? 'rounded-xl' : 'rounded-2xl'}`}>
+                      <button
+                        onClick={() => setExpandedDevice(isExpanded ? null : config.appliance_id)}
+                        className={`w-full flex items-center justify-between ${compact ? 'p-2.5' : 'p-3'}`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className={`rounded-lg flex items-center justify-center ${compact ? 'w-7 h-7' : 'w-8 h-8'} bg-primary/10 text-primary`}>
+                            <Bot className={compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} />
+                          </div>
+                          <div className="text-left">
+                            <p className={`font-bold text-slate-800 ${compact ? 'text-[11px]' : 'text-xs'}`}>{appName}</p>
+                            <p className={`text-slate-400 ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
+                              {ACTION_LABELS[config.preferred_action] || config.preferred_action}
+                              {config.protected_window_start && ` · Protected ${config.protected_window_start}–${config.protected_window_end}`}
+                              {config.user_override_active && ' · ⚠️ Override active'}
+                            </p>
+                          </div>
+                        </div>
+                        <ChevronRight className={`w-3.5 h-3.5 text-slate-300 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                      </button>
+
+                      <AnimatePresence>
+                        {isExpanded && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="overflow-hidden"
+                          >
+                            <div className={`border-t border-slate-100 ${compact ? 'p-2.5' : 'p-3'} space-y-2`}>
+                              {/* Preferred Action */}
+                              <div>
+                                <label className={`block font-medium text-slate-500 mb-1 ${compact ? 'text-[9px]' : 'text-[10px]'}`}>During high penalty</label>
+                                <div className="flex gap-1.5">
+                                  {(['turn_off', 'eco_mode'] as const).map(act => {
+                                    const appCategory = config.appliances?.category || appliances.find(a => a.id === config.appliance_id)?.category || '';
+                                    const ecoSupportedCategories = ['ac', 'washing_machine', 'refrigerator'];
+                                    const isEcoDisabled = act === 'eco_mode' && !ecoSupportedCategories.includes(appCategory);
+                                    return (
+                                      <button
+                                        key={act}
+                                        disabled={isEcoDisabled}
+                                        onClick={() => !isEcoDisabled && onUpsertDeviceConfig({
+                                          home_id: homeId,
+                                          appliance_id: config.appliance_id,
+                                          is_delegated: true,
+                                          preferred_action: act,
+                                        })}
+                                        className={`flex-1 py-1.5 rounded-lg border font-bold transition-all ${compact ? 'text-[9px]' : 'text-[10px]'} ${isEcoDisabled ? 'border-slate-100 text-slate-300 cursor-not-allowed opacity-50' : config.preferred_action === act ? 'border-primary bg-primary/5 text-primary' : 'border-slate-200 text-slate-500'}`}
+                                        title={isEcoDisabled ? 'Eco mode only available for AC, Washing Machine, Refrigerator' : ''}
+                                      >
+                                        {ACTION_LABELS[act]}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              {/* Remove delegation */}
+                              <button
+                                onClick={() => onUpsertDeviceConfig({
+                                  home_id: homeId,
+                                  appliance_id: config.appliance_id,
+                                  is_delegated: false,
+                                })}
+                                className={`w-full py-1.5 rounded-lg border border-rose-200 text-rose-500 font-bold ${compact ? 'text-[9px]' : 'text-[10px]'}`}
+                              >
+                                Remove from Autopilot
+                              </button>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Delegate Panel — shows all controllable appliances */}
+            <AnimatePresence>
+              {showDelegatePanel && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div className={`bg-white border border-slate-200 shadow-soft space-y-1.5 ${compact ? 'rounded-xl p-2.5 mt-2' : 'rounded-2xl p-3 mt-2'}`}>
+                    <p className={`font-medium text-slate-500 ${compact ? 'text-[10px]' : 'text-xs'}`}>
+                      Select appliances to delegate to AI
+                    </p>
+                    {controllable.map(app => {
+                      const isDelegated = delegatedIds.has(app.id);
+                      return (
+                        <button
+                          key={app.id}
+                          onClick={() => onUpsertDeviceConfig({
+                            home_id: homeId,
+                            appliance_id: app.id,
+                            is_delegated: !isDelegated,
+                            preferred_action: 'turn_off',
+                          })}
+                          className={`w-full flex items-center justify-between border transition-all ${compact ? 'p-2 rounded-lg' : 'p-2.5 rounded-xl'} ${isDelegated ? 'border-primary bg-primary/5' : 'border-slate-100 hover:border-slate-200'}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className={`rounded-lg flex items-center justify-center ${compact ? 'w-6 h-6' : 'w-7 h-7'} ${isDelegated ? 'bg-primary/20 text-primary' : 'bg-slate-100 text-slate-400'}`}>
+                              <ApplianceIcon category={app.category} />
+                            </div>
+                            <span className={`font-medium ${isDelegated ? 'text-primary' : 'text-slate-600'} ${compact ? 'text-[11px]' : 'text-xs'}`}>{app.name}</span>
+                          </div>
+                          <div className={`rounded-full flex items-center justify-center ${compact ? 'w-5 h-5' : 'w-6 h-6'} ${isDelegated ? 'bg-primary text-white' : 'border border-slate-300'}`}>
+                            {isDelegated && <Check className="w-3 h-3" />}
+                          </div>
+                        </button>
+                      );
+                    })}
+                    <button
+                      onClick={() => setShowDelegatePanel(false)}
+                      className={`w-full py-2 rounded-lg bg-slate-100 text-slate-600 font-bold ${compact ? 'text-[10px]' : 'text-xs'}`}
+                    >
+                      Done
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {delegatedCount === 0 && !showDelegatePanel && (
+              <button
+                onClick={() => setShowDelegatePanel(true)}
+                className={`w-full border-2 border-dashed border-slate-200 text-slate-400 font-bold flex items-center justify-center gap-2 hover:border-primary hover:text-primary transition-colors ${compact ? 'rounded-xl py-3 text-xs' : 'rounded-2xl py-4 text-sm'}`}
+              >
+                <Plus className={compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} /> Delegate Devices to AI
+              </button>
+            )}
+          </div>
         </>
       )}
     </div>

@@ -23,7 +23,7 @@ from app.config import get_settings
 from app.routers.appliances import router as appliances_router
 from app.routers.autopilot import router as autopilot_router
 from app.services.scheduler_manager import set_scheduler, restore_active_schedules
-from app.services.tariff_watcher import tariff_transition_watcher
+from app.services.transition_watcher import tariff_transition_watcher
 
 # ── Logging ─────────────────────────────────────────────────────────
 
@@ -78,13 +78,14 @@ async def lifespan(app: FastAPI):
     # Inject scheduler into manager
     set_scheduler(scheduler)
 
-    # Add tariff watcher cron (every 60 seconds)
+    # Add transition watcher cron (every 60 seconds)
+    # Detects tariff + carbon intensity transitions, triggers autopilot
     scheduler.add_job(
         tariff_transition_watcher,
         trigger=IntervalTrigger(seconds=60),
-        id="tariff_watcher",
+        id="transition_watcher",
         replace_existing=True,
-        name="Tariff Transition Watcher",
+        name="Tariff & Carbon Transition Watcher",
     )
 
     # Start scheduler

@@ -342,9 +342,11 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                                 <p className={`text-slate-300 font-medium mb-1 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>Total Savings</p>
                                 <div className="flex items-end gap-1">
                                     <span className={`font-bold ${isCompact ? 'text-base' : 'text-xl'}`}>₹{s.monthSavings}</span>
-                                    <span className={`text-emerald-400 mb-0.5 ${isCompact ? 'text-[9px]' : 'text-[10px]'}`}>+12%</span>
+                                    {s.monthSavings > 0 && (
+                                      <span className={`text-emerald-400 mb-0.5 ${isCompact ? 'text-[9px]' : 'text-[10px]'}`}>this month</span>
+                                    )}
                                 </div>
-                                <p className={`text-slate-400 mt-0.5 ${isCompact ? 'text-[9px]' : 'text-[10px]'}`}>vs last month</p>
+                                <p className={`text-slate-400 mt-0.5 ${isCompact ? 'text-[9px]' : 'text-[10px]'}`}>from load shifting</p>
                             </div>
                         </motion.div>
                     </div>
@@ -394,10 +396,10 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                                     <BarChart className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
                                 </div>
                                 <div>
-                                    <h3 className={`font-medium text-slate-500 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>Average Usage This Year</h3>
+                                    <h3 className={`font-medium text-slate-500 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>Average Monthly Bill</h3>
                                     <div className="flex items-baseline gap-1">
                                         <span className={`font-bold text-slate-800 ${isCompact ? 'text-lg' : 'text-2xl'}`}>₹{(s.yearAverage || s.monthBill).toLocaleString()}</span>
-                                        <span className={`text-emerald-500 font-medium ${isCompact ? 'text-[9px]' : 'text-[10px]'}`}>-5% vs last year</span>
+                                        <span className={`text-slate-400 font-medium ${isCompact ? 'text-[9px]' : 'text-[10px]'}`}>/month avg</span>
                                     </div>
                                 </div>
                             </div>

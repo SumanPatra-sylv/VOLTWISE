@@ -42,6 +42,9 @@ export interface DBHome {
     tariff_plan_id: string | null;
     discom_id: string | null;
     sanctioned_load_kw: number;
+    autopilot_enabled: boolean;
+    autopilot_strategy: AutopilotStrategy;
+    grid_protection_enabled: boolean;
     is_primary: boolean;
     created_at: string;
     updated_at: string;
@@ -196,4 +199,68 @@ export interface DBConsumerMaster {
     sanctioned_load_kw: number;
     is_active: boolean;
     created_at: string;
+}
+
+// ── Autopilot V2 Types ────────────────────────────────────────────
+
+export type AutopilotStrategy = 'balanced' | 'max_savings' | 'eco_mode';
+
+export interface DBDeviceAutopilotConfig {
+    id: string;
+    home_id: string;
+    appliance_id: string;
+    is_delegated: boolean;
+    preferred_action: 'turn_off' | 'eco_mode' | 'reduce_power';
+    protected_window_start: string | null; // "HH:MM"
+    protected_window_end: string | null;   // "HH:MM"
+    user_override_active: boolean;
+    last_override_at: string | null;
+    created_at: string;
+    updated_at: string;
+    // Joined from appliances table (optional)
+    appliances?: {
+        name: string;
+        category: ApplianceCategory;
+        status: string;
+        rated_power_w: number;
+        icon: string;
+    };
+}
+
+export interface DBCarbonIntensitySchedule {
+    id: string;
+    region_code: string;
+    hour: number;        // 0-23
+    gco2_per_kwh: number;
+    source: string;
+    valid_from: string;
+    valid_to: string | null;
+    created_at: string;
+}
+
+export type GridEventSeverity = 'advisory' | 'warning' | 'critical' | 'emergency';
+export type GridEventStatus = 'active' | 'resolved' | 'expired';
+
+export interface DBGridEvent {
+    id: string;
+    discom_id: string;
+    event_type: string;
+    severity: GridEventSeverity;
+    message: string;
+    affected_feeders: string[];
+    starts_at: string;
+    ends_at: string | null;
+    status: GridEventStatus;
+    created_at: string;
+}
+
+export interface DBAutopilotSavedState {
+    id: string;
+    home_id: string;
+    appliance_id: string;
+    pre_action_status: string;
+    trigger: string;
+    saved_at: string;
+    restored: boolean;
+    restored_at: string | null;
 }

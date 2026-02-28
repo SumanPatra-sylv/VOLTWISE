@@ -170,6 +170,16 @@ async def set_eco_mode(
         raise HTTPException(status_code=404, detail="Appliance not found")
 
     appliance = result.data[0]
+
+    # Eco mode only supported for certain categories
+    eco_supported = ("ac", "washing_machine", "refrigerator")
+    if appliance.get("category") not in eco_supported:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Eco mode not supported for {appliance.get('category', 'this appliance')}. "
+                   f"Only available for: {', '.join(eco_supported)}"
+        )
+
     adapter = get_adapter(appliance)
     ctrl = await adapter.set_eco_mode(appliance_id, body.enabled)
 
@@ -270,6 +280,31 @@ async def create_schedule(
         end_time=body.end_time,
         message=f"Scheduled at {body.start_time}" + (f" until {body.end_time}" if body.end_time else ""),
     )
+
+
+@router.delete("/appliances/{appliance_id}/schedule/{schedule_id}")
+async def delete_schedule(
+    appliance_id: str,
+    schedule_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Delete/cancel a schedule.
+    - Removes APScheduler jobs.
+    - Marks DB record is_active = False.
+    - Resets appliance status if it was SCHEDULED.
+    """
+    db = get_supabase()
+
+    # Verify schedule exists and belongs to this appliance
+    sched_result = db.table("schedules").select("*").eq("id", schedule_id).eq("appliance_id", appliance_id).limit(1).execute()
+    if not sched_result.data:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+
+    from app.services.scheduler_manager import cancel_schedule
+    await cancel_schedule(schedule_id)
+
+    return {"success": True, "message": "Schedule cancelled"}
 
 
 @router.post("/optimizer/execute", response_model=BatchTurnOffResponse)
