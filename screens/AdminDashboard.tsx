@@ -27,7 +27,6 @@ interface DashboardStats {
   totalUsers: number;
   activeUsers: number;
   totalHomes: number;
-  totalRecharges: number;
   totalRechargeAmount: number;
   avgBalance: number;
 }
@@ -103,17 +102,23 @@ const AdminDashboard: React.FC = () => {
       const { count: totalUsers } = await supabase.from('profiles').select('*', { count: 'exact', head: true });
       const { count: activeUsers } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('onboarding_done', true);
       const { count: totalHomes } = await supabase.from('homes').select('*', { count: 'exact', head: true });
-      const { data: recharges } = await supabase.from('recharges').select('amount').eq('status', 'completed');
+      const { data: recharges } = await supabase.from('recharges').select('amount');
       const { data: meters } = await supabase.from('meters').select('balance_amount');
 
-      const totalRechargeAmount = recharges?.reduce((sum, r) => sum + Number(r.amount), 0) || 0;
+      // Calculate total recharged from recharges table, fallback to sum of balances if no recharges
+      let totalRechargeAmount = recharges?.reduce((sum, r) => sum + Number(r.amount), 0) || 0;
+      
+      // If no recharges data, use sum of all meter balances as fallback
+      if (totalRechargeAmount === 0 && meters?.length) {
+        totalRechargeAmount = meters.reduce((sum, m) => sum + Number(m.balance_amount || 0), 0);
+      }
+      
       const avgBalance = meters?.length ? meters.reduce((sum, m) => sum + Number(m.balance_amount || 0), 0) / meters.length : 0;
 
       setStats({
         totalUsers: totalUsers || 0,
         activeUsers: activeUsers || 0,
         totalHomes: totalHomes || 0,
-        totalRecharges: recharges?.length || 0,
         totalRechargeAmount,
         avgBalance,
       });
@@ -194,7 +199,7 @@ const AdminDashboard: React.FC = () => {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
           <StatCard
             icon={Users}
             label="Total Users"
@@ -212,12 +217,6 @@ const AdminDashboard: React.FC = () => {
             label="Homes"
             value={stats?.totalHomes || 0}
             color="bg-purple-500"
-          />
-          <StatCard
-            icon={Activity}
-            label="Recharges"
-            value={stats?.totalRecharges || 0}
-            color="bg-orange-500"
           />
           <StatCard
             icon={DollarSign}
