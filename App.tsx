@@ -16,6 +16,7 @@ import SmartPlugSetup from './screens/SmartPlugSetup';
 import BillHistory from './screens/BillHistory';
 import Notifications from './screens/Notifications';
 import AdminDashboard from './screens/AdminDashboard';
+import VoiceAssistant from './components/VoiceAssistant';
 
 // ── Types ──────────────────────────────────────────────────────────
 type ViewMode = 'mobile' | 'tablet' | 'web';
@@ -53,7 +54,7 @@ const NotificationsRoute: React.FC<{ viewMode: ViewMode }> = ({ viewMode }) => {
 
 // ── Main App ───────────────────────────────────────────────────────
 const App: React.FC = () => {
-  const { viewMode, setViewMode, user, profile, isLoading, isAuthReady } = useApp();
+  const { viewMode, setViewMode, user, profile, home, isLoading, isAuthReady } = useApp();
 
   // Show splash while checking auth
   if (isLoading || !isAuthReady) {
@@ -124,6 +125,9 @@ const App: React.FC = () => {
 
         {/* Bottom Navigation */}
         <BottomNav viewMode={viewMode} />
+
+        {/* Global Voice Assistant */}
+        <VoiceAssistant homeId={home?.id} />
       </div>
     </div>
   );

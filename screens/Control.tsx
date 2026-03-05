@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { 
+import { createPortal } from 'react-dom';
+import {
   Power, Bot, Sliders, Settings2, Zap, Plus, Trash2, Clock, Wifi, WifiOff,
   X, Check, ChevronDown, AlertCircle, Calendar, Loader2, Edit2, ToggleRight
 } from 'lucide-react';
@@ -17,11 +18,11 @@ interface ControlProps {
 interface Schedule {
   id: string;
   appliance_id: string;
-  name: string;
-  action: 'on' | 'off';
-  time: string;
-  days: string[];
+  start_time: string;
+  repeat_type: string;
+  custom_days: number[] | null;
   is_active: boolean;
+  created_by: string;
 }
 
 const CATEGORY_OPTIONS: { value: ApplianceCategory; label: string; icon: string }[] = [
@@ -44,14 +45,14 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentSlotRate, setCurrentSlotRate] = useState(7.42);
-  
+
   const [showAddModal, setShowAddModal] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<DBAppliance | null>(null);
   const [editingAppliance, setEditingAppliance] = useState<DBAppliance | null>(null);
   const [schedulingAppliance, setSchedulingAppliance] = useState<DBAppliance | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  
+
   const isWeb = viewMode === 'web';
   const isTablet = viewMode === 'tablet';
   const isCompact = isWeb || isTablet;
@@ -99,7 +100,7 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
   // Real-time subscription to sync with Home page toggles
   useEffect(() => {
     if (!home?.id) return;
-    
+
     const channel = supabase
       .channel('control-appliances')
       .on(
@@ -116,7 +117,7 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
         }
       )
       .subscribe();
-    
+
     return () => {
       supabase.removeChannel(channel);
     };
@@ -132,11 +133,11 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
         .update({ status: newStatus, updated_at: new Date().toISOString() })
         .eq('id', appliance.id);
       if (error) throw error;
-      
+
       if (appliance.smart_plug_id) {
         console.log(`[Smart Plug] Toggling ${appliance.name} to ${newStatus}`);
       }
-      
+
       await supabase.from('control_logs').insert({
         appliance_id: appliance.id,
         user_id: (await supabase.auth.getUser()).data.user?.id,
@@ -144,8 +145,8 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
         trigger_source: 'manual',
         result: 'success'
       });
-      
-      setAppliances(prev => prev.map(a => 
+
+      setAppliances(prev => prev.map(a =>
         a.id === appliance.id ? { ...a, status: newStatus } : a
       ));
     } catch (err) {
@@ -179,7 +180,7 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
       <div className={`flex justify-between items-center ${isCompact ? 'mb-4' : 'mb-6'}`}>
         <h2 className={`font-bold text-slate-800 ${isCompact ? 'text-xl' : 'text-2xl'}`}>Control Center</h2>
         <div className="flex gap-2">
-          <button 
+          <button
             onClick={() => setShowAddModal(true)}
             className={`bg-primary text-white rounded-full shadow-lg shadow-primary/30 hover:bg-primary/90 transition-all flex items-center gap-1.5 ${isCompact ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm'}`}
           >
@@ -191,7 +192,7 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
           </button>
         </div>
       </div>
-      
+
       <div className={`bg-slate-100 p-1.5 flex relative ${isCompact ? 'rounded-xl mb-4' : 'rounded-[1.5rem] mb-6'}`}>
         <div className={`absolute top-1.5 bottom-1.5 w-[48%] bg-white shadow-sm transition-all duration-300 ease-spring ${isCompact ? 'rounded-lg' : 'rounded-2xl'} ${autoMode ? 'left-1.5' : 'left-[50.5%]'}`} />
         <button onClick={() => setAutoMode(true)} className={`flex-1 text-sm font-bold relative z-10 flex items-center justify-center gap-2 transition-colors ${isCompact ? 'py-2 rounded-lg text-xs' : 'py-3 rounded-xl'} ${autoMode ? 'text-slate-800' : 'text-slate-400'}`}>
@@ -279,7 +280,23 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
 
           {schedules.length > 0 && (
             <div>
-              <h3 className={`font-bold text-slate-800 px-1 ${isCompact ? 'text-sm mb-2' : 'text-lg mb-4'}`}>Scheduled Actions</h3>
+              <div className={`flex justify-between items-center px-1 ${isCompact ? 'mb-2' : 'mb-4'}`}>
+                <h3 className={`font-bold text-slate-800 ${isCompact ? 'text-sm' : 'text-lg'}`}>Scheduled Actions</h3>
+                <button
+                  onClick={async () => {
+                    if (!home?.id) return;
+                    try {
+                      await supabase.from('schedules').delete().eq('home_id', home.id);
+                      await supabase.from('appliances').update({ status: 'OFF', schedule_time: null }).eq('home_id', home.id).eq('status', 'SCHEDULED');
+                      fetchSchedules();
+                      fetchAppliances();
+                    } catch (err) { console.error('Failed to clear schedules:', err); }
+                  }}
+                  className={`text-rose-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg font-bold transition-colors ${isCompact ? 'text-[10px] px-2 py-1' : 'text-xs px-3 py-1.5'}`}
+                >
+                  Clear All
+                </button>
+              </div>
               <div className="space-y-2">
                 {schedules.map(schedule => {
                   const app = appliances.find(a => a.id === schedule.appliance_id);
@@ -290,12 +307,38 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
                           <Clock className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
                         </div>
                         <div>
-                          <p className={`font-bold text-slate-800 ${isCompact ? 'text-xs' : 'text-sm'}`}>{app?.name || 'Unknown'} → {schedule.action.toUpperCase()}</p>
-                          <p className={`text-slate-400 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>{schedule.time} • {schedule.days.join(', ')}</p>
+                          <p className={`font-bold text-slate-800 ${isCompact ? 'text-xs' : 'text-sm'}`}>{app?.name || 'Unknown'} → ON</p>
+                          <p className={`text-slate-400 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>{schedule.start_time} • {schedule.repeat_type}{schedule.custom_days ? ` (${schedule.custom_days.join(',')})` : ''}</p>
                         </div>
                       </div>
-                      <div className={`px-2 py-1 rounded-lg font-bold ${schedule.is_active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'} ${isCompact ? 'text-[9px]' : 'text-xs'}`}>
-                        {schedule.is_active ? 'Active' : 'Paused'}
+                      <div className="flex items-center gap-2">
+                        <div className={`px-2 py-1 rounded-lg font-bold ${schedule.is_active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'} ${isCompact ? 'text-[9px]' : 'text-xs'}`}>
+                          {schedule.is_active ? 'Active' : 'Paused'}
+                        </div>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await supabase.from('schedules').delete().eq('id', schedule.id);
+                              // Check if this was the last schedule for this appliance
+                              const { data: remaining } = await supabase
+                                .from('schedules')
+                                .select('id')
+                                .eq('appliance_id', schedule.appliance_id)
+                                .eq('is_active', true);
+                              if (!remaining || remaining.length === 0) {
+                                await supabase.from('appliances')
+                                  .update({ status: 'OFF', schedule_time: null })
+                                  .eq('id', schedule.appliance_id);
+                              }
+                              fetchSchedules();
+                              fetchAppliances();
+                            } catch (err) { console.error('Failed to delete schedule:', err); }
+                          }}
+                          className="p-1.5 rounded-lg hover:bg-rose-50 text-slate-300 hover:text-rose-500 transition-colors"
+                          title="Remove schedule"
+                        >
+                          <X className={isCompact ? 'w-3 h-3' : 'w-4 h-4'} />
+                        </button>
                       </div>
                     </div>
                   );
@@ -306,23 +349,29 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
         </div>
       )}
 
-      <AnimatePresence>
-        {showAddModal && (
-          <AddApplianceModal homeId={home?.id || ''} appliance={editingAppliance}
-            onClose={() => { setShowAddModal(false); setEditingAppliance(null); }}
-            onSaved={() => { setShowAddModal(false); setEditingAppliance(null); fetchAppliances(); }}
-          />
-        )}
-      </AnimatePresence>
+      {createPortal(
+        <AnimatePresence>
+          {showAddModal && (
+            <AddApplianceModal homeId={home?.id || ''} appliance={editingAppliance}
+              onClose={() => { setShowAddModal(false); setEditingAppliance(null); }}
+              onSaved={() => { setShowAddModal(false); setEditingAppliance(null); fetchAppliances(); }}
+            />
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
 
-      <AnimatePresence>
-        {showScheduleModal && schedulingAppliance && (
-          <ScheduleModal homeId={home?.id || ''} appliance={schedulingAppliance}
-            onClose={() => { setShowScheduleModal(false); setSchedulingAppliance(null); }}
-            onSaved={() => { setShowScheduleModal(false); setSchedulingAppliance(null); fetchSchedules(); }}
-          />
-        )}
-      </AnimatePresence>
+      {createPortal(
+        <AnimatePresence>
+          {showScheduleModal && schedulingAppliance && (
+            <ScheduleModal homeId={home?.id || ''} appliance={schedulingAppliance}
+              onClose={() => { setShowScheduleModal(false); setSchedulingAppliance(null); }}
+              onSaved={() => { setShowScheduleModal(false); setSchedulingAppliance(null); fetchSchedules(); }}
+            />
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
 
       {/* Delete Confirmation Dialog */}
       <AnimatePresence>
@@ -494,12 +543,14 @@ const AddApplianceModal: React.FC<AddApplianceModalProps> = ({ homeId, appliance
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4" onClick={onClose}>
-      <motion.div initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 100, opacity: 0 }} onClick={e => e.stopPropagation()} className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md max-h-[85vh] overflow-y-auto">
-        <div className="p-6">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-xl font-bold text-slate-800">{isEdit ? 'Edit Appliance' : 'Add Appliance'}</h2>
-            <button onClick={onClose} className="p-2 rounded-full hover:bg-slate-100"><X className="w-5 h-5 text-slate-400" /></button>
-          </div>
+      <motion.div initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 100, opacity: 0 }} onClick={e => e.stopPropagation()} className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="p-6 pb-3 flex justify-between items-center flex-shrink-0">
+          <h2 className="text-xl font-bold text-slate-800">{isEdit ? 'Edit Appliance' : 'Add Appliance'}</h2>
+          <button onClick={onClose} className="p-2 rounded-full hover:bg-slate-100"><X className="w-5 h-5 text-slate-400" /></button>
+        </div>
+        {/* Scrollable Content */}
+        <div className="px-6 overflow-y-auto flex-1">
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Name</label>
@@ -538,12 +589,13 @@ const AddApplianceModal: React.FC<AddApplianceModalProps> = ({ homeId, appliance
             </div>
             {error && <div className="flex items-center gap-2 text-rose-500 text-sm bg-rose-50 p-3 rounded-xl"><AlertCircle className="w-4 h-4" /> {error}</div>}
           </div>
-          <div className="flex gap-3 mt-6">
-            <button onClick={onClose} className="flex-1 py-3 rounded-xl border border-slate-200 font-bold text-slate-600">Cancel</button>
-            <button onClick={handleSave} disabled={saving} className="flex-1 py-3 rounded-xl bg-primary text-white font-bold flex items-center justify-center gap-2 shadow-lg shadow-primary/30">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {isEdit ? 'Update' : 'Add'}
-            </button>
-          </div>
+        </div>
+        {/* Sticky buttons */}
+        <div className="p-6 pt-4 flex gap-3 flex-shrink-0 border-t border-slate-100">
+          <button onClick={onClose} className="flex-1 py-3 rounded-xl border border-slate-200 font-bold text-slate-600">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="flex-1 py-3 rounded-xl bg-primary text-white font-bold flex items-center justify-center gap-2 shadow-lg shadow-primary/30">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {isEdit ? 'Update' : 'Add'}
+          </button>
         </div>
       </motion.div>
     </motion.div>
@@ -562,11 +614,30 @@ const ScheduleModal: React.FC<ScheduleModalProps> = ({ homeId, appliance, onClos
 
   const toggleDay = (day: string) => setSelectedDays(prev => prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]);
 
+  // Map day names to ISO day numbers (1=Mon, 7=Sun) for custom_days INT[]
+  const DAY_TO_NUM: Record<string, number> = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
+
   const handleSave = async () => {
     if (selectedDays.length === 0) { setError('Select at least one day'); return; }
     setSaving(true); setError('');
     try {
-      const { error: err } = await supabase.from('schedules').insert({ home_id: homeId, appliance_id: appliance.id, name: `${appliance.name} - ${action.toUpperCase()} at ${time}`, action, time, days: selectedDays, is_active: true });
+      // Determine repeat_type based on selected days
+      const allDays = selectedDays.length === 7;
+      const weekdays = selectedDays.length === 5 && ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].every(d => selectedDays.includes(d));
+      const weekends = selectedDays.length === 2 && ['Sat', 'Sun'].every(d => selectedDays.includes(d));
+
+      const repeatType = allDays ? 'daily' : weekdays ? 'weekdays' : weekends ? 'weekends' : 'custom';
+      const customDays = repeatType === 'custom' ? selectedDays.map(d => DAY_TO_NUM[d]) : null;
+
+      const { error: err } = await supabase.from('schedules').insert({
+        home_id: homeId,
+        appliance_id: appliance.id,
+        start_time: time,
+        repeat_type: repeatType,
+        custom_days: customDays,
+        is_active: true,
+        created_by: 'user'
+      });
       if (err) throw err;
       await supabase.from('appliances').update({ status: 'SCHEDULED', schedule_time: time }).eq('id', appliance.id);
       onSaved();
