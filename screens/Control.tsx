@@ -1106,6 +1106,7 @@ const ApplianceIcon: React.FC<{ category: ApplianceCategory }> = ({ category }) 
 interface AddApplianceModalProps { homeId: string; appliance: DBAppliance | null; onClose: () => void; onSaved: () => void; }
 
 const AddApplianceModal: React.FC<AddApplianceModalProps> = ({ homeId, appliance, onClose, onSaved }) => {
+  const { profile, home } = useApp();
   const isEdit = !!appliance;
   const [name, setName] = useState(appliance?.name || '');
   const [category, setCategory] = useState<ApplianceCategory>(appliance?.category || 'other');
@@ -1116,9 +1117,35 @@ const AddApplianceModal: React.FC<AddApplianceModalProps> = ({ homeId, appliance
 
   const handleSave = async () => {
     if (!name.trim()) { setError('Please enter appliance name'); return; }
+    if (!profile) { setError('Please log in first'); return; }
+    
     setSaving(true); setError('');
     try {
-      const data = { home_id: homeId, name: name.trim(), category, icon: CATEGORY_OPTIONS.find(c => c.value === category)?.icon || 'zap', rated_power_w: 0, is_controllable: isControllable, source: hasSmartPlug ? 'smart_plug' : 'nilm', status: 'OFF', is_active: true, updated_at: new Date().toISOString() };
+      let actualHomeId = homeId;
+      
+      // Check if home exists in database
+      const { data: existingHome } = await supabase.from('homes').select('id').eq('id', homeId).maybeSingle();
+      
+      if (!existingHome) {
+        // Home doesn't exist - create a new one
+        const newHomeId = crypto.randomUUID();
+        const { error: homeErr } = await supabase.from('homes').insert({
+          id: newHomeId,
+          user_id: profile.id,
+          name: home?.name || 'My Home',
+          state: home?.state || profile.location || null,
+          tariff_category: home?.tariff_category || 'domestic',
+          is_primary: true,
+        });
+        
+        if (homeErr) {
+          console.error('Home insert error:', homeErr);
+          throw new Error(`Could not create home: ${homeErr.message}`);
+        }
+        actualHomeId = newHomeId;
+      }
+      
+      const data = { home_id: actualHomeId, name: name.trim(), category, icon: CATEGORY_OPTIONS.find(c => c.value === category)?.icon || 'zap', rated_power_w: 0, is_controllable: isControllable, source: hasSmartPlug ? 'smart_plug' : 'nilm', status: 'OFF', is_active: true, updated_at: new Date().toISOString() };
       if (isEdit) { const { error: err } = await supabase.from('appliances').update(data).eq('id', appliance.id); if (err) throw err; }
       else { const { error: err } = await supabase.from('appliances').insert(data); if (err) throw err; }
       onSaved();
