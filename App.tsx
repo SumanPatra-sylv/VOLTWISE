@@ -16,6 +16,7 @@ import SmartPlugSetup from './screens/SmartPlugSetup';
 import BillHistory from './screens/BillHistory';
 import Notifications from './screens/Notifications';
 import AdminDashboard from './screens/AdminDashboard';
+import Technicians from './screens/Technicians';
 
 // ── Types ──────────────────────────────────────────────────────────
 type ViewMode = 'mobile' | 'tablet' | 'web';
@@ -49,6 +50,11 @@ const BillHistoryRoute: React.FC<{ viewMode: ViewMode }> = ({ viewMode }) => {
 const NotificationsRoute: React.FC<{ viewMode: ViewMode }> = ({ viewMode }) => {
   const navigate = useNavigate();
   return <Notifications onBack={() => navigate('/profile')} viewMode={viewMode} />;
+};
+
+const TechniciansRoute: React.FC<{ viewMode: ViewMode }> = ({ viewMode }) => {
+  const navigate = useNavigate();
+  return <Technicians onBack={() => navigate('/profile')} viewMode={viewMode} />;
 };
 
 // ── Main App ───────────────────────────────────────────────────────
@@ -114,6 +120,7 @@ const App: React.FC = () => {
               <Route path="/smart-plug-setup" element={<SmartPlugRoute viewMode={viewMode} />} />
               <Route path="/bill-history" element={<BillHistoryRoute viewMode={viewMode} />} />
               <Route path="/notifications" element={<NotificationsRoute viewMode={viewMode} />} />
+              <Route path="/technicians" element={<TechniciansRoute viewMode={viewMode} />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </ErrorBoundary>
@@ -143,6 +150,7 @@ const HomeWithNav: React.FC<{ viewMode: ViewMode }> = ({ viewMode }) => {
       SmartPlugSetup: '/smart-plug-setup',
       BillHistory: '/bill-history',
       Notifications: '/notifications',
+      Technicians: '/technicians',
     };
     navigate(routes[tab] || '/');
   };
@@ -156,6 +164,7 @@ const ProfileWithNav: React.FC<{ viewMode: ViewMode }> = ({ viewMode }) => {
       SmartPlugSetup: '/smart-plug-setup',
       BillHistory: '/bill-history',
       Notifications: '/notifications',
+      Technicians: '/technicians',
     };
     navigate(routes[tab] || '/profile');
   };

@@ -3,10 +3,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Users, Zap, Home, Activity, Search, Filter, ChevronDown, ChevronRight,
   LogOut, MoreVertical, Eye, TrendingUp, TrendingDown, DollarSign,
-  AlertTriangle, CheckCircle, Clock, X, Loader2, RefreshCw
+  AlertTriangle, CheckCircle, Clock, X, Loader2, RefreshCw, Wrench
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { supabase } from '../services/supabase';
+import Technicians from './Technicians';
+
+type AdminTab = 'users' | 'technicians';
 
 interface UserData {
   id: string;
@@ -39,6 +42,7 @@ const AdminDashboard: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<UserData | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [activeTab, setActiveTab] = useState<AdminTab>('users');
 
   const fetchDashboardData = useCallback(async () => {
     try {
@@ -177,6 +181,33 @@ const AdminDashboard: React.FC = () => {
                 <p className="text-xs text-slate-400">Welcome, {profile?.name}</p>
               </div>
             </div>
+            
+            {/* Tab Navigation */}
+            <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1">
+              <button
+                onClick={() => setActiveTab('users')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  activeTab === 'users' 
+                    ? 'bg-white text-slate-800 shadow-sm' 
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <Users className="w-4 h-4" />
+                Users
+              </button>
+              <button
+                onClick={() => setActiveTab('technicians')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  activeTab === 'technicians' 
+                    ? 'bg-white text-slate-800 shadow-sm' 
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <Wrench className="w-4 h-4" />
+                Technicians
+              </button>
+            </div>
+            
             <div className="flex items-center gap-4">
               <button
                 onClick={handleRefresh}
@@ -197,6 +228,13 @@ const AdminDashboard: React.FC = () => {
         </div>
       </header>
 
+      {/* Technicians Tab */}
+      {activeTab === 'technicians' && (
+        <Technicians onBack={() => setActiveTab('users')} viewMode="web" />
+      )}
+
+      {/* Users Tab */}
+      {activeTab === 'users' && (
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Stats Cards */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
@@ -337,6 +375,7 @@ const AdminDashboard: React.FC = () => {
           </div>
         </div>
       </main>
+      )}
 
       {/* User Detail Modal */}
       <AnimatePresence>

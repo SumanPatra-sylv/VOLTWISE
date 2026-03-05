@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { User, Settings, Shield, LogOut, ChevronRight, MapPin, Zap, TreePine, Bell, FileText, Plug } from 'lucide-react';
+import { User, Settings, Shield, LogOut, ChevronRight, MapPin, Zap, TreePine, Bell, FileText, Plug, Wrench } from 'lucide-react';
 import { Tab } from '../types';
 import { useApp } from '../contexts/AppContext';
 
@@ -96,6 +96,8 @@ const Profile: React.FC<ProfileProps> = ({ viewMode = 'mobile', onNavigate }) =>
                         <SettingItem icon={FileText} label="Bill History" value="View All" onClick={() => onNavigate?.('BillHistory')} />
                         <div className="h-[1px] bg-slate-50 w-full"></div>
                         <SettingItem icon={Bell} label="Notifications" value="3 New" onClick={() => onNavigate?.('Notifications')} />
+                        <div className="h-[1px] bg-slate-50 w-full"></div>
+                        <SettingItem icon={Wrench} label="Find Technicians" value="Nearby" onClick={() => onNavigate?.('Technicians')} />
                     </div>
                 </div>
 
