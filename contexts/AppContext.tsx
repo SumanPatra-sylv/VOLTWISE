@@ -405,8 +405,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 demoProfile.onboarding_done = true;
                 demoProfile.updated_at = new Date().toISOString();
 
+                // Generate proper UUIDs for demo home/meter so appliances can be added
+                const demoHomeId = crypto.randomUUID();
+                const demoMeterId = crypto.randomUUID();
+
                 const demoHome: DBHome = {
-                    id: 'demo-home',
+                    id: demoHomeId,
                     user_id: authState.user.id,
                     name: 'My Demo Home',
                     address: null,
@@ -425,7 +429,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 };
 
                 const demoMeter: DBMeter = {
-                    id: 'demo-meter',
+                    id: demoMeterId,
                     home_id: demoHome.id,
                     meter_number: consumer.meter_number,
                     meter_type: consumer.connection_type,
@@ -439,6 +443,41 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                     created_at: new Date().toISOString(),
                     updated_at: new Date().toISOString(),
                 };
+
+                // Actually insert demo home and meter into database so appliances can be added
+                try {
+                    // Update profile
+                    await supabase.from('profiles').update({
+                        consumer_number: consumerNumber,
+                        location: consumer.state,
+                        onboarding_done: true,
+                        updated_at: new Date().toISOString(),
+                    }).eq('id', authState.user.id);
+
+                    // Insert home
+                    await supabase.from('homes').insert({
+                        id: demoHomeId,
+                        user_id: authState.user.id,
+                        name: 'My Home',
+                        state: consumer.state,
+                        tariff_category: consumer.tariff_category,
+                        discom_id: consumer.discom_id,
+                        sanctioned_load_kw: consumer.sanctioned_load_kw,
+                        is_primary: true,
+                    });
+
+                    // Insert meter
+                    await supabase.from('meters').insert({
+                        id: demoMeterId,
+                        home_id: demoHomeId,
+                        meter_number: consumer.meter_number,
+                        meter_type: consumer.connection_type,
+                        is_active: true,
+                        balance_amount: 0,
+                    });
+                } catch (dbErr) {
+                    console.warn('[Onboarding] Demo DB insert failed (may already exist):', dbErr);
+                }
 
                 setAuthState(prev => ({
                     ...prev,
