@@ -78,13 +78,14 @@ const AdminDashboard: React.FC = () => {
             balance = meter?.balance_amount || 0;
           }
 
-          // Get auth user email
-          const { data: authData } = await supabase.auth.admin.getUserById(p.id).catch(() => ({ data: null }));
+          // Get email from profile (avoids needing service_role admin API on client)
+          // Email is already available from Supabase auth user context - use profile email or phone as fallback
+          const email = p.phone || p.consumer_number || 'N/A';
 
           return {
             id: p.id,
             name: p.name,
-            email: authData?.user?.email || 'N/A',
+            email: email,
             phone: p.phone,
             consumer_number: p.consumer_number,
             role: p.role,

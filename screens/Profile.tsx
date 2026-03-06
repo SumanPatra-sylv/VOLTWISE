@@ -4,6 +4,7 @@ import { User, Settings, Shield, LogOut, ChevronRight, MapPin, Zap, TreePine, Be
 import { Tab } from '../types';
 import { useApp } from '../contexts/AppContext';
 import { getCarbonDashboard } from '../services/api';
+import { supabase } from '../services/supabase';
 
 type ViewMode = 'mobile' | 'tablet' | 'web';
 
@@ -36,6 +37,7 @@ const Profile: React.FC<ProfileProps> = ({ viewMode = 'mobile', onNavigate }) =>
     // Carbon stats — kWh shifted and trees equivalent from Rewards page logic
     const [kwhSaved, setKwhSaved] = useState<number>(0);
     const [treesPlanted, setTreesPlanted] = useState<number>(0);
+    const [unreadNotifCount, setUnreadNotifCount] = useState<number>(0);
 
     useEffect(() => {
         if (!isAuthReady || !home?.id) return;
@@ -46,6 +48,19 @@ const Profile: React.FC<ProfileProps> = ({ viewMode = 'mobile', onNavigate }) =>
             }
         }).catch(() => { /* keep zeros on error */ });
     }, [home?.id, isAuthReady]);
+
+    // Fetch real unread notification count
+    useEffect(() => {
+        if (!profile?.id) return;
+        supabase
+            .from('notifications')
+            .select('id', { count: 'exact', head: true })
+            .eq('user_id', profile.id)
+            .eq('is_read', false)
+            .then(({ count }) => {
+                setUnreadNotifCount(count || 0);
+            });
+    }, [profile?.id]);
 
     const handleSignOut = async () => {
         try {
@@ -106,7 +121,7 @@ const Profile: React.FC<ProfileProps> = ({ viewMode = 'mobile', onNavigate }) =>
                         <div className="h-[1px] bg-slate-50 w-full"></div>
                         <SettingItem icon={FileText} label="Bill History" value="View All" onClick={() => onNavigate?.('BillHistory')} />
                         <div className="h-[1px] bg-slate-50 w-full"></div>
-                        <SettingItem icon={Bell} label="Notifications" value="3 New" onClick={() => onNavigate?.('Notifications')} />
+                        <SettingItem icon={Bell} label="Notifications" value={unreadNotifCount > 0 ? `${unreadNotifCount} New` : 'All Read'} onClick={() => onNavigate?.('Notifications')} />
                     </div>
                 </div>
 

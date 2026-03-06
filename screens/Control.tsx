@@ -59,7 +59,7 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
   const [appliances, setAppliances] = useState<DBAppliance[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [loading, setLoading] = useState(true);
-  const [currentSlotRate, setCurrentSlotRate] = useState(7.42);
+  const [currentSlotRate, setCurrentSlotRate] = useState(0);
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
@@ -132,6 +132,18 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
       fetchUserTariffSlots(home.id).then(slots => {
         console.log('[Interceptor] Tariff slots loaded:', slots.length, slots);
         setTariffSlots(slots);
+        // Derive current slot rate from real tariff data
+        const currentHour = new Date().getHours();
+        const currentSlot = slots.find(s => {
+          const start = s.start_hour;
+          const end = s.end_hour;
+          return start < end
+            ? (currentHour >= start && currentHour < end)
+            : (currentHour >= start || currentHour < end);
+        });
+        if (currentSlot) {
+          setCurrentSlotRate(Number(currentSlot.rate));
+        }
       });
     }
   }, [home?.id]);
@@ -199,8 +211,8 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
       )
       .subscribe();
 
-    // Polling fallback: refresh every 5s
-    const poll = setInterval(refresh, 5_000);
+    // Polling fallback: refresh every 30s (realtime is primary)
+    const poll = setInterval(refresh, 30_000);
 
     return () => {
       clearInterval(poll);

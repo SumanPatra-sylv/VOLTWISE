@@ -307,7 +307,18 @@ async def simulate_peak(
             app = appliances[aid]
             if app["status"] in ("ON", "WARNING"):
                 power_kw = app.get("rated_power_w", 0) / 1000
-                savings = power_kw * 3.24
+                # Use the home's actual peak tariff rate instead of hardcoded magic number
+                peak_rate = 3.24  # fallback
+                try:
+                    slots_r = db.table("tariff_slots").select("rate").eq(
+                        "plan_id",
+                        db.table("homes").select("tariff_plan_id").eq("id", home_id).limit(1).execute().data[0]["tariff_plan_id"]
+                    ).eq("slot_type", "peak").limit(1).execute()
+                    if slots_r.data:
+                        peak_rate = float(slots_r.data[0]["rate"])
+                except Exception:
+                    pass  # use fallback
+                savings = power_kw * peak_rate
                 would_affect.append({
                     "appliance_id": aid,
                     "name": app.get("name"),
@@ -543,7 +554,7 @@ async def get_grid_status(
         }
 
     from app.services.grid_protection import check_grid_status
-    grid_status = check_grid_status(discom_id)
+    grid_status = await check_grid_status(discom_id)
 
     return {
         "grid_protection_enabled": grid_enabled,

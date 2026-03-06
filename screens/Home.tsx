@@ -7,7 +7,7 @@ import { Zap, DollarSign, AlertTriangle, ArrowRight, MoreHorizontal, BarChart, C
 import { motion } from 'framer-motion';
 import { Tab, Appliance, ApplianceStatus } from '../types';
 import { useApp } from '../contexts/AppContext';
-import { getDashboardStats, DashboardStats } from '../services/api';
+import { getDashboardStats, DashboardStats, checkPeakSavingsAlert, createPeakSavingsNotification } from '../services/api';
 import { useApi } from '../hooks/useApi';
 import { supabase } from '../services/supabase';
 import { DBAppliance } from '../types/database';
@@ -178,6 +178,23 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
             });
     }, [home?.id, tariffSlots, appliances]);
 
+    // ── Peak Tariff Smart Notification (fires once per peak window) ──
+    useEffect(() => {
+        if (!home?.id || !user?.id) return;
+        // Check immediately, then every 5 minutes
+        const check = async () => {
+            try {
+                const alert = await checkPeakSavingsAlert(home.id);
+                if (alert) {
+                    await createPeakSavingsNotification(user.id, alert);
+                }
+            } catch { /* silent */ }
+        };
+        check();
+        const interval = setInterval(check, 5 * 60 * 1000);
+        return () => clearInterval(interval);
+    }, [home?.id, user?.id, appliances]);
+
     // Real-time subscription to sync appliance status with Control Center
     useEffect(() => {
         if (!home?.id) return;
@@ -199,8 +216,8 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
             )
             .subscribe();
 
-        // Polling fallback: refresh every 5s
-        const poll = setInterval(fetchAppliances, 5_000);
+        // Polling fallback: refresh every 30s (realtime is primary, polling is backup)
+        const poll = setInterval(fetchAppliances, 30_000);
 
         return () => {
             clearInterval(poll);
@@ -408,7 +425,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                             </button>
                         </div>
                         <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden mt-2">
-                            <div className="bg-amber-400 w-[65%] h-full rounded-full"></div>
+                            <div className="bg-amber-400 h-full rounded-full" style={{ width: `${Math.min(Math.round((s.monthBill / Math.max(s.yearAverage || s.monthBill, 1)) * 100), 100)}%` }}></div>
                         </div>
                     </motion.div>
                 </div>

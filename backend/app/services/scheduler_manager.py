@@ -187,9 +187,10 @@ async def cancel_schedule(schedule_id: str) -> bool:
 
     # 2. Deactivate in DB
     sched_result = db.table("schedules").select("appliance_id").eq("id", schedule_id).limit(1).execute()
+    from datetime import timezone
     db.table("schedules").update({
         "is_active": False,
-        "updated_at": datetime.now().isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", schedule_id).execute()
 
     # 3. Reset appliance status from SCHEDULED → OFF if no other active schedules

@@ -66,6 +66,114 @@ def _get_heavy_on_appliance_names(db, home_id: str) -> list[str]:
     return names[:5]
 
 
+def _send_peak_savings_notification(
+    db,
+    home_id: str,
+    home: dict,
+    user_id: str,
+    current_slot: dict,
+    slots: list[dict],
+) -> None:
+    """
+    During peak tariff, find high-wattage appliances that are ON but NOT
+    managed by autopilot. Calculate savings and send an actionable notification.
+    """
+    peak_rate = float(current_slot["rate"])
+
+    # Find cheapest slot rate (off-peak)
+    off_peak_rate = peak_rate
+    for s in slots:
+        if float(s["rate"]) < off_peak_rate:
+            off_peak_rate = float(s["rate"])
+    rate_diff = peak_rate - off_peak_rate
+
+    if rate_diff <= 0:
+        return
+
+    # Get IDs of appliances delegated to autopilot
+    delegated_ids: set[str] = set()
+    if home.get("autopilot_enabled"):
+        dac_result = db.table("device_autopilot_config").select("appliance_id").eq(
+            "home_id", home_id
+        ).eq("is_delegated", True).execute()
+        delegated_ids = {r["appliance_id"] for r in (dac_result.data or [])}
+
+    # Get all ON heavy appliances NOT managed by autopilot
+    app_result = db.table("appliances").select(
+        "id, name, rated_power_w, category, optimization_tier"
+    ).eq("home_id", home_id).eq("is_active", True).in_(
+        "status", ["ON", "WARNING"]
+    ).execute()
+
+    heavy_tiers = ("tier_1_shiftable", "tier_2_prep_needed", "tier_3_comfort")
+    # Category-based fallback for tier
+    category_tier_map = {
+        "ac": "tier_3_comfort",
+        "geyser": "tier_1_shiftable",
+        "washing_machine": "tier_2_prep_needed",
+    }
+
+    unmanaged_heavy = []
+    for a in (app_result.data or []):
+        aid = a["id"]
+        # Skip if managed by autopilot
+        if aid in delegated_ids:
+            continue
+        tier = a.get("optimization_tier") or category_tier_map.get(a.get("category", ""), "tier_4_essential")
+        wattage = a.get("rated_power_w", 0)
+        # Include if tier 1-3 OR wattage >= 500W
+        if tier in heavy_tiers or wattage >= 500:
+            unmanaged_heavy.append(a)
+
+    if not unmanaged_heavy:
+        return
+
+    # Calculate total savings per hour
+    total_savings_per_hour = sum(
+        (a["rated_power_w"] / 1000) * rate_diff for a in unmanaged_heavy
+    )
+    total_savings_per_hour = round(total_savings_per_hour, 2)
+
+    # Peak window duration (hours)
+    start_h = current_slot.get("start_hour", 18)
+    end_h = current_slot.get("end_hour", 22)
+    peak_duration = end_h - start_h if end_h > start_h else (24 - start_h + end_h)
+    total_potential_savings = round(total_savings_per_hour * peak_duration, 2)
+
+    names = [a["name"] for a in unmanaged_heavy[:4]]
+    names_str = ", ".join(names)
+    if len(unmanaged_heavy) > 4:
+        names_str += f" +{len(unmanaged_heavy) - 4} more"
+
+    db.table("notifications").insert({
+        "user_id": user_id,
+        "type": "peak",
+        "title": f"💰 {len(unmanaged_heavy)} appliance{'s' if len(unmanaged_heavy) > 1 else ''} running during peak tariff",
+        "message": (
+            f"{names_str} running during high tariff period (₹{peak_rate}/kWh). "
+            f"Tap to save up to ₹{total_potential_savings:.0f} this peak window."
+        ),
+        "icon": "alert-triangle",
+        "color": "text-amber-600",
+        "bg_color": "bg-amber-50",
+        "metadata": {
+            "subtype": "peak_savings_alert",
+            "action": "navigate_optimizer",
+            "appliance_ids": [a["id"] for a in unmanaged_heavy],
+            "appliance_names": [a["name"] for a in unmanaged_heavy],
+            "savings_per_hour": total_savings_per_hour,
+            "total_potential_savings": total_potential_savings,
+            "peak_rate": peak_rate,
+            "off_peak_rate": off_peak_rate,
+        },
+    }).execute()
+
+    logger.info(
+        f"[TransitionWatcher] Peak savings notification for {home_id}: "
+        f"{len(unmanaged_heavy)} unmanaged appliances, ₹{total_potential_savings}/window"
+    )
+
+
 async def tariff_transition_watcher() -> None:
     """
     Runs every 1 minute via APScheduler.
@@ -137,6 +245,14 @@ async def tariff_transition_watcher() -> None:
                         "bg_color": "bg-rose-50",
                     }).execute()
 
+                    # ── Smart Peak Alert: Identify non-autopilot heavy appliances ──
+                    try:
+                        _send_peak_savings_notification(
+                            db, home_id, home, user_id, current_slot, slots
+                        )
+                    except Exception as e:
+                        logger.error(f"[TransitionWatcher] Peak savings notif failed for {home_id}: {e}")
+
                 elif prev_type == "peak":
                     db.table("notifications").insert({
                         "user_id": user_id,
@@ -149,6 +265,8 @@ async def tariff_transition_watcher() -> None:
                     }).execute()
 
             # ── Carbon Intensity Transition Detection ──
+            # Resolve region_code BEFORE try-block so it's available in penalty block too
+            region_code = "IN-BR"  # default fallback
             try:
                 from app.services.carbon import (
                     is_clean_energy_window,

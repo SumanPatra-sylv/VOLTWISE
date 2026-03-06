@@ -104,11 +104,13 @@ def get_daily_carbon_profile(region_code: str) -> list[dict]:
         return [{"hour": h, "gco2_per_kwh": INDIA_AVG_GCO2} for h in range(24)]
 
     # Deduplicate: take the latest effective_from for each hour
+    # Data is already ordered by hour ASC; for same hour, later rows
+    # (from re-seeding etc.) overwrite earlier ones → last wins = latest
     seen: dict[int, dict] = {}
     for row in result.data:
         h = row["hour"]
-        if h not in seen:
-            seen[h] = {"hour": h, "gco2_per_kwh": float(row["gco2_per_kwh"])}
+        # Always overwrite so the last entry (latest effective_from) wins
+        seen[h] = {"hour": h, "gco2_per_kwh": float(row["gco2_per_kwh"])}
 
     return [seen.get(h, {"hour": h, "gco2_per_kwh": INDIA_AVG_GCO2}) for h in range(24)]
 

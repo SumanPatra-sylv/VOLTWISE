@@ -79,14 +79,15 @@ const InterceptorModal: React.FC<InterceptorModalProps> = ({
     const currentSlot = getSlotForHour(currentHour, slots);
     const currentCostPerHour = (appliance.rated_power_w / 1000) * (currentSlot?.rate || 0);
 
-    // Insert schedule into Supabase (upsert: delete old → insert new)
+    // Insert schedule into Supabase (deactivate conflicting schedules only)
     const handleSchedule = async (option: ScheduleOption) => {
         setScheduling(true);
         try {
-            // Delete any existing active schedules for this appliance
+            // Only deactivate existing active schedules for this specific appliance
+            // (mark inactive rather than hard-delete, so history is preserved)
             await supabase
                 .from('schedules')
-                .delete()
+                .update({ is_active: false, updated_at: new Date().toISOString() })
                 .eq('appliance_id', appliance.id)
                 .eq('is_active', true);
 
