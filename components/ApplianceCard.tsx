@@ -4,6 +4,32 @@ import { Appliance, ApplianceStatus } from '../types';
 import { Power, Clock, AlertTriangle, Check, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
+// ── Appliance image map (SVG illustrations per category) ───────────
+const APPLIANCE_IMAGES: Record<string, string> = {
+    wind: '❄️',  // AC
+    thermometer: '🚿',  // Geyser
+    disc: '🌀',  // Washing machine / fan
+    box: '🧊',  // Fridge
+    tv: '📺',  // Television
+    lightbulb: '💡',  // Lighting
+    zap: '⚡',  // Other
+};
+
+const ApplianceImage: React.FC<{ icon: string; isOn: boolean; compact: boolean }> = ({ icon, isOn, compact }) => (
+    <div
+        className={`
+            flex items-center justify-center rounded-2xl
+            ${compact ? 'w-10 h-10 text-2xl' : 'w-16 h-16 text-4xl'}
+            ${isOn ? 'bg-gradient-to-br from-cyan-50 to-indigo-50' : 'bg-slate-50'}
+            transition-all duration-300
+        `}
+    >
+        <span style={{ filter: isOn ? 'none' : 'grayscale(0.7) opacity(0.5)' }}>
+            {APPLIANCE_IMAGES[icon] || '⚡'}
+        </span>
+    </div>
+);
+
 interface Props {
     data: Appliance;
     compact?: boolean;
@@ -221,7 +247,14 @@ const ApplianceCard: React.FC<Props> = ({ data, compact = false, onToggle }) => 
                         </div>
                     </div>
 
-                    <div className={`z-10 ${compact ? 'mt-1' : 'mt-2'}`}>
+                    {/* Appliance illustration */}
+                    {!compact && (
+                        <div className="z-10 flex justify-center py-1">
+                            <ApplianceImage icon={data.icon} isOn={isOn} compact={compact} />
+                        </div>
+                    )}
+
+                    <div className={`z-10 ${compact ? 'mt-1' : 'mt-1'}`}>
                         <h3 className={`font-bold text-slate-800 leading-tight mb-1 line-clamp-2 ${compact ? 'text-xs' : 'text-sm'}`}>{data.name}</h3>
 
                         <AnimatePresence mode='wait'>
@@ -234,11 +267,9 @@ const ApplianceCard: React.FC<Props> = ({ data, compact = false, onToggle }) => 
                                     className="flex flex-col"
                                 >
                                     <div className={`flex items-center gap-1 ${compact ? 'mb-0' : 'mb-1'}`}>
-                                        <span className={`font-bold ${isWarning ? 'text-rose-500' : 'text-cyan-600'} ${compact ? 'text-[10px]' : 'text-xs'}`}>
-                                            {data.power}W
+                                        <span className={`font-semibold ${isWarning ? 'text-rose-500' : 'text-cyan-600'} ${compact ? 'text-[10px]' : 'text-xs'}`}>
+                                            Running
                                         </span>
-                                        <span className={`rounded-full bg-slate-300 ${compact ? 'w-0.5 h-0.5' : 'w-1 h-1'}`}></span>
-                                        <span className={`text-slate-400 ${compact ? 'text-[10px]' : 'text-xs'}`}>Running</span>
                                     </div>
                                     {isWarning && !compact && (
                                         <div className="flex items-center gap-1 text-[10px] font-bold text-rose-500 bg-rose-100/50 px-2 py-1 rounded-lg self-start">

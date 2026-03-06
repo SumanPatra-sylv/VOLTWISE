@@ -379,3 +379,78 @@ export async function recordOverride(
 export async function getGridStatus(homeId: string): Promise<GridStatus> {
     return apiFetch<GridStatus>(`/autopilot/grid-status?home_id=${homeId}`);
 }
+
+// ── Power Analytics API (NILM + Smart Plug) ───────────────────────
+
+export interface PowerApplianceData {
+    appliance: string;
+    label: string;
+    category: string;
+    is_on: boolean;
+    estimated_watts: number;
+    confidence: number;
+    source: 'smart_plug' | 'nilm' | 'estimated';
+}
+
+export interface PowerSnapshot {
+    timestamp: string;
+    aggregate_watts: number;
+    appliances: PowerApplianceData[];
+    total_disaggregated: number;
+    untracked_watts: number;
+    smart_plug_count: number;
+    nilm_count: number;
+}
+
+export interface PowerTimelinePoint {
+    timestamp: string;
+    watts: number;
+}
+
+export interface PowerBreakdownItem {
+    appliance: string;
+    label: string;
+    category: string;
+    watts: number;
+    percentage: number;
+    is_on: boolean;
+    source: string;
+    confidence: number;
+}
+
+export interface PowerBreakdown {
+    total_watts: number;
+    breakdown: PowerBreakdownItem[];
+    timestamp: string;
+}
+
+export interface PowerSourceInfo {
+    appliance: string;
+    label: string;
+    category: string;
+    source: 'smart_plug' | 'nilm';
+    accuracy: string;
+}
+
+/** Get live power snapshot — aggregate + per-appliance watts. */
+export async function getPowerSnapshot(homeId: string): Promise<PowerSnapshot> {
+    return apiFetch<PowerSnapshot>(`/power-analytics/snapshot?home_id=${homeId}`);
+}
+
+/** Get power timeline for area chart (5-min intervals). */
+export async function getPowerTimeline(
+    homeId: string,
+    hours: number = 24,
+): Promise<{ home_id: string; hours: number; data: PowerTimelinePoint[] }> {
+    return apiFetch(`/power-analytics/timeline?home_id=${homeId}&hours=${hours}`);
+}
+
+/** Get per-appliance breakdown for donut chart. */
+export async function getPowerBreakdown(homeId: string): Promise<PowerBreakdown> {
+    return apiFetch<PowerBreakdown>(`/power-analytics/breakdown?home_id=${homeId}`);
+}
+
+/** Get data source info for each appliance. */
+export async function getPowerSources(homeId: string): Promise<{ sources: PowerSourceInfo[]; model_info: any }> {
+    return apiFetch(`/power-analytics/sources?home_id=${homeId}`);
+}

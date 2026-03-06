@@ -28,7 +28,10 @@ class Settings(BaseSettings):
     # APScheduler
     scheduler_db_url: str = ""  # Empty = in-memory (PoC)
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    # Gemini AI (optional)
+    gemini_api_key: str = ""
+
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 @lru_cache

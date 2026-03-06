@@ -1,12 +1,12 @@
 import React from 'react';
 import { Routes, Route, NavLink, useNavigate, useLocation, Navigate } from 'react-router-dom';
-import { Home as HomeIcon, PieChart, Trophy, Settings, User, Smartphone, Tablet, Monitor, Zap } from 'lucide-react';
+import { Home as HomeIcon, PieChart, Trophy, Settings, User, Smartphone, Tablet, Monitor, Zap, Activity } from 'lucide-react';
 import { useApp } from './contexts/AppContext';
 import ErrorBoundary from './components/ErrorBoundary';
 
 // ── Screen Imports ─────────────────────────────────────────────────
 import Home from './screens/Home';
-import Insights from './screens/Insights';
+import LivePower from './screens/LivePower';
 import Rewards from './screens/Rewards';
 import Control from './screens/Control';
 import Profile from './screens/Profile';
@@ -106,7 +106,7 @@ const App: React.FC = () => {
           <ErrorBoundary>
             <Routes>
               <Route path="/" element={<HomeWithNav viewMode={viewMode} />} />
-              <Route path="/insights" element={<Insights viewMode={viewMode} />} />
+              <Route path="/insights" element={<LivePower viewMode={viewMode} />} />
               <Route path="/rewards" element={<Rewards viewMode={viewMode} />} />
               <Route path="/control" element={<Control viewMode={viewMode} />} />
               <Route path="/profile" element={<ProfileWithNav viewMode={viewMode} />} />
@@ -196,7 +196,7 @@ const BottomNav: React.FC<{ viewMode: ViewMode }> = ({ viewMode }) => {
   return (
     <nav className="fixed bottom-4 left-4 right-4 h-16 md:absolute md:bottom-6 md:left-4 md:right-4 md:h-20 bg-white/80 backdrop-blur-xl border border-white/40 rounded-2xl md:rounded-[2rem] flex justify-around items-center px-2 z-50 shadow-soft">
       <NavButton to="/" icon={HomeIcon} label="Home" />
-      <NavButton to="/insights" icon={PieChart} label="Insights" />
+      <NavButton to="/insights" icon={Activity} label="Live Power" />
       <NavButton to="/rewards" icon={Trophy} label="Rewards" />
       <NavButton to="/control" icon={Settings} label="Control" />
       <NavButton to="/profile" icon={User} label="Profile" />
