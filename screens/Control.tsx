@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Power, Bot, Sliders, Settings2, Zap, Plus, Trash2, Clock, Wifi, WifiOff,
   X, Check, ChevronDown, AlertCircle, Calendar, Loader2, Edit2, ToggleRight,
@@ -419,80 +420,80 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
                     return 0; // already ordered by created_at desc from DB
                   })
                   .map(schedule => {
-                  const app = appliances.find(a => a.id === schedule.appliance_id);
-                  const dayNames = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-                  const daysDisplay = schedule.repeat_type === 'custom' && schedule.custom_days
-                    ? schedule.custom_days.map(d => dayNames[d]).join(', ')
-                    : schedule.repeat_type;
+                    const app = appliances.find(a => a.id === schedule.appliance_id);
+                    const dayNames = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+                    const daysDisplay = schedule.repeat_type === 'custom' && schedule.custom_days
+                      ? schedule.custom_days.map(d => dayNames[d]).join(', ')
+                      : schedule.repeat_type;
 
-                  // Compute "Runs until" display
-                  const endTimeDisplay = schedule.end_time ? schedule.end_time.slice(0, 5) : null;
-                  const startTimeDisplay = schedule.start_time?.slice(0, 5);
+                    // Compute "Runs until" display
+                    const endTimeDisplay = schedule.end_time ? schedule.end_time.slice(0, 5) : null;
+                    const startTimeDisplay = schedule.start_time?.slice(0, 5);
 
-                  // Determine if this schedule is currently running
-                  const now = new Date();
-                  const nowMins = now.getHours() * 60 + now.getMinutes();
-                  const [sh, sm] = (schedule.start_time || '00:00').split(':').map(Number);
-                  const startMins = sh * 60 + sm;
-                  let endMins = -1;
-                  let isRunning = false;
-                  if (schedule.end_time) {
-                    const [eh, em] = schedule.end_time.split(':').map(Number);
-                    endMins = eh * 60 + em;
-                    // Handle midnight crossing
-                    if (endMins <= startMins) {
-                      isRunning = schedule.is_active && (nowMins >= startMins || nowMins < endMins);
+                    // Determine if this schedule is currently running
+                    const now = new Date();
+                    const nowMins = now.getHours() * 60 + now.getMinutes();
+                    const [sh, sm] = (schedule.start_time || '00:00').split(':').map(Number);
+                    const startMins = sh * 60 + sm;
+                    let endMins = -1;
+                    let isRunning = false;
+                    if (schedule.end_time) {
+                      const [eh, em] = schedule.end_time.split(':').map(Number);
+                      endMins = eh * 60 + em;
+                      // Handle midnight crossing
+                      if (endMins <= startMins) {
+                        isRunning = schedule.is_active && (nowMins >= startMins || nowMins < endMins);
+                      } else {
+                        isRunning = schedule.is_active && nowMins >= startMins && nowMins < endMins;
+                      }
                     } else {
-                      isRunning = schedule.is_active && nowMins >= startMins && nowMins < endMins;
+                      isRunning = schedule.is_active && app?.status === 'ON' && nowMins >= startMins;
                     }
-                  } else {
-                    isRunning = schedule.is_active && app?.status === 'ON' && nowMins >= startMins;
-                  }
 
-                  // Completed = not active and has a last_executed
-                  const isCompleted = !schedule.is_active;
+                    // Completed = not active and has a last_executed
+                    const isCompleted = !schedule.is_active;
 
-                  return (
-                    <div key={schedule.id} className={`bg-white border shadow-soft flex items-center justify-between ${isCompact ? 'rounded-xl p-3' : 'rounded-2xl p-4'} ${isCompleted ? 'opacity-50 border-slate-100' : isRunning ? 'border-cyan-200' : 'border-slate-100'}`}>
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <div className={`rounded-xl flex items-center justify-center flex-shrink-0 ${isCompact ? 'w-8 h-8' : 'w-10 h-10'} ${isRunning ? 'bg-cyan-100 text-cyan-600' : isCompleted ? 'bg-slate-100 text-slate-400' : 'bg-indigo-50 text-indigo-600'}`}>
-                          <Clock className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
+                    return (
+                      <div key={schedule.id} className={`bg-white border shadow-soft flex items-center justify-between ${isCompact ? 'rounded-xl p-3' : 'rounded-2xl p-4'} ${isCompleted ? 'opacity-50 border-slate-100' : isRunning ? 'border-cyan-200' : 'border-slate-100'}`}>
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <div className={`rounded-xl flex items-center justify-center flex-shrink-0 ${isCompact ? 'w-8 h-8' : 'w-10 h-10'} ${isRunning ? 'bg-cyan-100 text-cyan-600' : isCompleted ? 'bg-slate-100 text-slate-400' : 'bg-indigo-50 text-indigo-600'}`}>
+                            <Clock className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
+                          </div>
+                          <div className="min-w-0">
+                            <p className={`font-bold text-slate-800 truncate ${isCompact ? 'text-xs' : 'text-sm'}`}>
+                              {app?.name || 'Unknown'} at {startTimeDisplay}
+                              {endTimeDisplay ? ` · until ${endTimeDisplay}` : ''}
+                            </p>
+                            <p className={`text-slate-400 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>
+                              {isRunning ? '🟢 Running now' : ''}
+                              {isRunning && endTimeDisplay ? ` · Ends at ${endTimeDisplay}` : ''}
+                              {!isRunning ? daysDisplay : ''}
+                              {schedule.created_by === 'ai_optimizer' ? ' • 🤖 AI' : ''}
+                            </p>
+                          </div>
                         </div>
-                        <div className="min-w-0">
-                          <p className={`font-bold text-slate-800 truncate ${isCompact ? 'text-xs' : 'text-sm'}`}>
-                            {app?.name || 'Unknown'} at {startTimeDisplay}
-                            {endTimeDisplay ? ` · until ${endTimeDisplay}` : ''}
-                          </p>
-                          <p className={`text-slate-400 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>
-                            {isRunning ? '🟢 Running now' : ''}
-                            {isRunning && endTimeDisplay ? ` · Ends at ${endTimeDisplay}` : ''}
-                            {!isRunning ? daysDisplay : ''}
-                            {schedule.created_by === 'ai_optimizer' ? ' • 🤖 AI' : ''}
-                          </p>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <div className={`px-2 py-1 rounded-lg font-bold ${isRunning ? 'bg-cyan-50 text-cyan-600' : schedule.is_active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'} ${isCompact ? 'text-[9px]' : 'text-xs'}`}>
+                            {isRunning ? 'Running' : schedule.is_active ? 'Active' : 'Done'}
+                          </div>
+                          {schedule.is_active && (
+                            <button
+                              onClick={() => deleteScheduleHandler(schedule.id, schedule.appliance_id)}
+                              disabled={actionLoading === schedule.id}
+                              className={`rounded-lg border border-rose-200 bg-rose-50 text-rose-500 hover:bg-rose-100 transition-colors flex items-center justify-center ${isCompact ? 'w-7 h-7' : 'w-8 h-8'}`}
+                              title="Cancel schedule"
+                            >
+                              {actionLoading === schedule.id ? (
+                                <Loader2 className={`animate-spin ${isCompact ? 'w-3 h-3' : 'w-3.5 h-3.5'}`} />
+                              ) : (
+                                <X className={isCompact ? 'w-3 h-3' : 'w-3.5 h-3.5'} />
+                              )}
+                            </button>
+                          )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <div className={`px-2 py-1 rounded-lg font-bold ${isRunning ? 'bg-cyan-50 text-cyan-600' : schedule.is_active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'} ${isCompact ? 'text-[9px]' : 'text-xs'}`}>
-                          {isRunning ? 'Running' : schedule.is_active ? 'Active' : 'Done'}
-                        </div>
-                        {schedule.is_active && (
-                          <button
-                            onClick={() => deleteScheduleHandler(schedule.id, schedule.appliance_id)}
-                            disabled={actionLoading === schedule.id}
-                            className={`rounded-lg border border-rose-200 bg-rose-50 text-rose-500 hover:bg-rose-100 transition-colors flex items-center justify-center ${isCompact ? 'w-7 h-7' : 'w-8 h-8'}`}
-                            title="Cancel schedule"
-                          >
-                            {actionLoading === schedule.id ? (
-                              <Loader2 className={`animate-spin ${isCompact ? 'w-3 h-3' : 'w-3.5 h-3.5'}`} />
-                            ) : (
-                              <X className={isCompact ? 'w-3 h-3' : 'w-3.5 h-3.5'} />
-                            )}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
               </div>
             </div>
           )}
@@ -1118,14 +1119,14 @@ const AddApplianceModal: React.FC<AddApplianceModalProps> = ({ homeId, appliance
   const handleSave = async () => {
     if (!name.trim()) { setError('Please enter appliance name'); return; }
     if (!profile) { setError('Please log in first'); return; }
-    
+
     setSaving(true); setError('');
     try {
       let actualHomeId = homeId;
-      
+
       // Check if home exists in database
       const { data: existingHome } = await supabase.from('homes').select('id').eq('id', homeId).maybeSingle();
-      
+
       if (!existingHome) {
         // Home doesn't exist - create a new one
         const newHomeId = crypto.randomUUID();
@@ -1137,14 +1138,14 @@ const AddApplianceModal: React.FC<AddApplianceModalProps> = ({ homeId, appliance
           tariff_category: home?.tariff_category || 'domestic',
           is_primary: true,
         });
-        
+
         if (homeErr) {
           console.error('Home insert error:', homeErr);
           throw new Error(`Could not create home: ${homeErr.message}`);
         }
         actualHomeId = newHomeId;
       }
-      
+
       const data = { home_id: actualHomeId, name: name.trim(), category, icon: CATEGORY_OPTIONS.find(c => c.value === category)?.icon || 'zap', rated_power_w: 0, is_controllable: isControllable, source: hasSmartPlug ? 'smart_plug' : 'nilm', status: 'OFF', is_active: true, updated_at: new Date().toISOString() };
       if (isEdit) { const { error: err } = await supabase.from('appliances').update(data).eq('id', appliance.id); if (err) throw err; }
       else { const { error: err } = await supabase.from('appliances').insert(data); if (err) throw err; }
