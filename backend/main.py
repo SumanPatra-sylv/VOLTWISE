@@ -22,6 +22,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.config import get_settings
 from app.routers.appliances import router as appliances_router
 from app.routers.autopilot import router as autopilot_router
+from app.routers.power_analytics import router as power_analytics_router
 from app.services.scheduler_manager import set_scheduler, restore_active_schedules
 from app.services.transition_watcher import tariff_transition_watcher
 
@@ -134,6 +135,7 @@ app.add_middleware(
 # Register routers
 app.include_router(appliances_router)
 app.include_router(autopilot_router)
+app.include_router(power_analytics_router)
 
 
 # ── Root ────────────────────────────────────────────────────────────
