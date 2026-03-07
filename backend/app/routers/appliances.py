@@ -128,24 +128,33 @@ async def toggle_appliance(
 
     adapter = get_adapter(appliance)
 
-    if body.action == "turn_on":
-        ctrl = await adapter.turn_on(appliance_id)
-        new_status = "ON"
-    elif body.action == "turn_off":
-        ctrl = await adapter.turn_off(appliance_id)
-        new_status = "OFF"
-    else:
-        raise HTTPException(status_code=400, detail=f"Invalid action: {body.action}")
+    try:
+        if body.action == "turn_on":
+            ctrl = await adapter.turn_on(appliance_id)
+            new_status = "ON"
+        elif body.action == "turn_off":
+            ctrl = await adapter.turn_off(appliance_id)
+            new_status = "OFF"
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid action: {body.action}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Toggle] Adapter error for {appliance_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Adapter error: {str(e)}")
 
-    # Log control action
-    db.table("control_logs").insert({
-        "appliance_id": appliance_id,
-        "user_id": user["id"],
-        "action": body.action,
-        "trigger_source": "manual",
-        "result": "success" if ctrl.success else "failed",
-        "response_time_ms": ctrl.response_time_ms,
-    }).execute()
+    # Log control action — non-fatal if this fails (don't block the response)
+    try:
+        db.table("control_logs").insert({
+            "appliance_id": appliance_id,
+            "user_id": user["id"],
+            "action": body.action,
+            "trigger_source": "voice",
+            "result": "success" if ctrl.success else "failed",
+            "response_time_ms": ctrl.response_time_ms,
+        }).execute()
+    except Exception as log_err:
+        logger.warning(f"[Toggle] control_log insert failed (non-fatal): {log_err}")
 
     return ToggleResponse(
         success=ctrl.success,

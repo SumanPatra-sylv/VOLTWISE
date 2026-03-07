@@ -126,8 +126,8 @@ const App: React.FC = () => {
         {/* Bottom Navigation */}
         <BottomNav viewMode={viewMode} />
 
-        {/* Global Voice Assistant */}
-        <VoiceAssistant homeId={home?.id} />
+        {/* Global Voice Assistant — inside the phone frame, above lightning button */}
+        <VoiceAssistant homeId={home?.id} viewMode={viewMode} />
       </div>
     </div>
   );
