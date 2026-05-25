@@ -54,7 +54,7 @@ const NotificationsRoute: React.FC<{ viewMode: ViewMode }> = ({ viewMode }) => {
 
 // ── Main App ───────────────────────────────────────────────────────
 const App: React.FC = () => {
-  const { viewMode, setViewMode, user, profile, home, isLoading, isAuthReady } = useApp();
+  const { viewMode, setViewMode, user, profile, home, isLoading, isAuthReady, viewAsConsumer } = useApp();
 
   // Show splash while checking auth
   if (isLoading || !isAuthReady) {
@@ -66,8 +66,8 @@ const App: React.FC = () => {
     return <Onboarding />;
   }
 
-  // Admin users get a separate dashboard
-  if (profile.role === 'admin' || profile.role === 'super_admin') {
+  // Admin users get a separate dashboard (unless viewing as consumer)
+  if ((profile.role === 'admin' || profile.role === 'super_admin') && !viewAsConsumer) {
     return <AdminDashboard />;
   }
 
@@ -128,6 +128,8 @@ const App: React.FC = () => {
 
         {/* Global Voice Assistant */}
         <VoiceAssistant homeId={home?.id} />
+
+
       </div>
     </div>
   );

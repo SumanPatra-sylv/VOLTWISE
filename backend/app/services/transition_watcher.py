@@ -190,10 +190,6 @@ async def tariff_transition_watcher() -> None:
         current_hour = now.hour
         current_minute = now.minute
 
-        # Only act on the first minute of each hour (slot boundaries)
-        if current_minute != 0:
-            return
-
         db = get_supabase()
 
         # Get all active homes with tariff plans
@@ -203,6 +199,11 @@ async def tariff_transition_watcher() -> None:
 
         if not homes_result.data:
             return
+
+        # Tariff/carbon transition notifications only fire at slot boundaries (:00)
+        # Penalty enforcement fires every 5 minutes for responsiveness
+        is_slot_boundary = current_minute == 0
+        is_enforcement_tick = current_minute % 5 == 0
 
         # Cache tariff slots by plan
         plan_slots_cache: dict[str, list[dict]] = {}
@@ -227,8 +228,8 @@ async def tariff_transition_watcher() -> None:
             current_type = current_slot["slot_type"]
             prev_type = prev_slot["slot_type"]
 
-            # ── Tariff Transition Detection ──
-            tariff_changed = current_type != prev_type
+            # ── Tariff Transition Detection (slot boundary only) ──
+            tariff_changed = is_slot_boundary and current_type != prev_type
             if tariff_changed:
                 logger.info(
                     f"[TransitionWatcher] Home {home_id}: {prev_type} → {current_type} (hour {current_hour})"
@@ -264,10 +265,22 @@ async def tariff_transition_watcher() -> None:
                         "bg_color": "bg-emerald-50",
                     }).execute()
 
-            # ── Carbon Intensity Transition Detection ──
+            # ── Carbon Intensity Transition Detection (slot boundary only) ──
             # Resolve region_code BEFORE try-block so it's available in penalty block too
             region_code = "IN-BR"  # default fallback
-            try:
+            if not is_slot_boundary:
+                # Skip carbon transition detection on non-boundary ticks
+                # but still resolve region_code for penalty enforcement below
+                try:
+                    from app.services.carbon import _get_region_for_home
+                    region_code = _get_region_for_home(home_id)
+                except Exception:
+                    pass
+            elif is_slot_boundary:
+                pass  # fall through to the carbon detection block below
+
+            if is_slot_boundary:
+              try:
                 from app.services.carbon import (
                     is_clean_energy_window,
                     _get_region_for_home,
@@ -352,11 +365,11 @@ async def tariff_transition_watcher() -> None:
                         f"{'clean → dirty' if not is_clean_now else 'dirty → clean'}"
                     )
 
-            except Exception as e:
+              except Exception as e:
                 logger.error(f"[TransitionWatcher] Carbon check failed for {home_id}: {e}")
 
-            # ── Penalty-Based Autopilot Trigger ──
-            if home.get("autopilot_enabled"):
+            # ── Penalty-Based Autopilot Trigger (every 5 min) ──
+            if home.get("autopilot_enabled") and is_enforcement_tick:
                 try:
                     from app.services.penalty_engine import (
                         get_current_penalty,
@@ -371,7 +384,20 @@ async def tariff_transition_watcher() -> None:
                     was_above = _last_penalty_cache.get(home_id)
                     _last_penalty_cache[home_id] = is_above_threshold
 
-                    if was_above is not None and is_above_threshold != was_above:
+                    # FIX: On first check (cold start / server restart), if penalty is
+                    # already above threshold, enforce immediately instead of waiting
+                    # for a transition that may never come.
+                    if was_above is None and is_above_threshold:
+                        logger.info(
+                            f"[TransitionWatcher] First run for {home_id}: penalty already above "
+                            f"threshold ({penalty_data['penalty']:.3f}), enforcing now"
+                        )
+                        trigger = "peak_tariff" if current_type == "peak" else "penalty_threshold"
+                        from app.services.autopilot import execute_strategy_action
+                        result = await execute_strategy_action(home_id, user_id, trigger)
+                        logger.info(f"[TransitionWatcher] Autopilot cold-start triggered: {result}")
+
+                    elif was_above is not None and is_above_threshold != was_above:
                         if is_above_threshold:
                             # Penalty crossed threshold — execute strategy
                             trigger = "peak_tariff" if current_type == "peak" else "penalty_threshold"
@@ -383,6 +409,15 @@ async def tariff_transition_watcher() -> None:
                             from app.services.autopilot import execute_strategy_restore
                             result = await execute_strategy_restore(home_id, user_id)
                             logger.info(f"[TransitionWatcher] Autopilot restore: {result}")
+
+                    # FIX: Even if no transition occurred, if penalty is above threshold
+                    # re-check that all delegated devices are actually turned off.
+                    # Handles: user manually turned TV on, or schedule turned it back on.
+                    elif was_above is not None and is_above_threshold and was_above:
+                        from app.services.autopilot import enforce_delegated_devices
+                        result = await enforce_delegated_devices(home_id, user_id, current_type)
+                        if result["enforced"]:
+                            logger.info(f"[TransitionWatcher] Re-enforced {result['enforced']} device(s) for {home_id}")
 
                 except Exception as e:
                     logger.error(f"[TransitionWatcher] Penalty check failed for {home_id}: {e}", exc_info=True)

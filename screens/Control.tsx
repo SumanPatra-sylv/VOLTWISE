@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { createPortal } from 'react-dom';
 import {
   Power, Bot, Sliders, Settings2, Zap, Plus, Trash2, Clock, Wifi, WifiOff,
@@ -55,6 +56,7 @@ const CATEGORY_OPTIONS: { value: ApplianceCategory; label: string; icon: string 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
+  const { t } = useTranslation();
   const { home } = useApp();
   const [autoMode, setAutoMode] = useState(true);
   const [appliances, setAppliances] = useState<DBAppliance[]>([]);
@@ -296,14 +298,14 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
   return (
     <div className={`pb-32 overflow-y-auto h-full no-scrollbar ${isCompact ? 'pt-6 px-6' : 'pt-10 px-5'}`}>
       <div className={`flex justify-between items-center ${isCompact ? 'mb-4' : 'mb-6'}`}>
-        <h2 className={`font-bold text-slate-800 ${isCompact ? 'text-xl' : 'text-2xl'}`}>Control Center</h2>
+        <h2 className={`font-bold text-slate-800 ${isCompact ? 'text-xl' : 'text-2xl'}`}>{t('control.title')}</h2>
         <div className="flex gap-2">
           <button
             onClick={() => setShowAddModal(true)}
             className={`bg-primary text-white rounded-full shadow-lg shadow-primary/30 hover:bg-primary/90 transition-all flex items-center gap-1.5 ${isCompact ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm'}`}
           >
             <Plus className={isCompact ? 'w-3.5 h-3.5' : 'w-4 h-4'} />
-            <span className="font-bold">Add Appliance</span>
+            <span className="font-bold">{t('control.addAppliance')}</span>
           </button>
           <button className={`bg-white rounded-full border border-slate-200 shadow-sm text-slate-500 hover:rotate-90 transition-transform duration-500 ${isCompact ? 'p-1.5' : 'p-2'}`}>
             <Settings2 className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
@@ -314,10 +316,10 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
       <div className={`bg-slate-100 p-1.5 flex relative ${isCompact ? 'rounded-xl mb-4' : 'rounded-[1.5rem] mb-6'}`}>
         <div className={`absolute top-1.5 bottom-1.5 w-[48%] bg-white shadow-sm transition-all duration-300 ease-spring ${isCompact ? 'rounded-lg' : 'rounded-2xl'} ${autoMode ? 'left-1.5' : 'left-[50.5%]'}`} />
         <button onClick={() => setAutoMode(true)} className={`flex-1 text-sm font-bold relative z-10 flex items-center justify-center gap-2 transition-colors ${isCompact ? 'py-2 rounded-lg text-xs' : 'py-3 rounded-xl'} ${autoMode ? 'text-slate-800' : 'text-slate-400'}`}>
-          <Bot className={isCompact ? 'w-3 h-3' : 'w-4 h-4'} /> Auto-Pilot
+          <Bot className={isCompact ? 'w-3 h-3' : 'w-4 h-4'} /> {t('control.autoPilot')}
         </button>
         <button onClick={() => setAutoMode(false)} className={`flex-1 text-sm font-bold relative z-10 flex items-center justify-center gap-2 transition-colors ${isCompact ? 'py-2 rounded-lg text-xs' : 'py-3 rounded-xl'} ${!autoMode ? 'text-slate-800' : 'text-slate-400'}`}>
-          <Sliders className={isCompact ? 'w-3 h-3' : 'w-4 h-4'} /> Manual
+          <Sliders className={isCompact ? 'w-3 h-3' : 'w-4 h-4'} /> {t('control.manual')}
         </button>
       </div>
 
@@ -374,13 +376,13 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
       ) : (
         <div className={isCompact ? 'space-y-4' : 'space-y-6'}>
           <div>
-            <h3 className={`font-bold text-slate-800 px-1 ${isCompact ? 'text-sm mb-2' : 'text-lg mb-4'}`}>My Appliances ({appliances.length})</h3>
+            <h3 className={`font-bold text-slate-800 px-1 ${isCompact ? 'text-sm mb-2' : 'text-lg mb-4'}`}>{t('control.myAppliances')} ({appliances.length})</h3>
             {appliances.length === 0 ? (
               <div className={`bg-slate-50 border-2 border-dashed border-slate-200 flex flex-col items-center justify-center ${isCompact ? 'rounded-xl p-6' : 'rounded-[2rem] p-10'}`}>
                 <Zap className="w-10 h-10 text-slate-300 mb-3" />
-                <p className="text-slate-400 text-sm font-medium mb-4">No appliances added yet</p>
+                <p className="text-slate-400 text-sm font-medium mb-4">{t('control.noAppliances')}</p>
                 <button onClick={() => setShowAddModal(true)} className="bg-primary text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2">
-                  <Plus className="w-4 h-4" /> Add Appliance
+                  <Plus className="w-4 h-4" /> {t('control.addAppliance')}
                 </button>
               </div>
             ) : (
@@ -423,7 +425,7 @@ const Control: React.FC<ControlProps> = ({ viewMode = 'mobile' }) => {
 
           {schedules.length > 0 && (
             <div>
-              <h3 className={`font-bold text-slate-800 px-1 ${isCompact ? 'text-sm mb-2' : 'text-lg mb-4'}`}>Scheduled Actions</h3>
+              <h3 className={`font-bold text-slate-800 px-1 ${isCompact ? 'text-sm mb-2' : 'text-lg mb-4'}`}>{t('control.scheduledActions')}</h3>
               <div className="space-y-2">
                 {[...schedules]
                   .sort((a, b) => {

@@ -44,6 +44,10 @@ interface AppContextType {
     // Onboarding — just needs consumer number, auto-derives everything else
     lookupConsumer: (consumerNumber: string) => Promise<{ data: DBConsumerMaster | null; error: any }>;
     completeOnboarding: (consumerNumber: string) => Promise<{ error: any }>;
+
+    // Admin ↔ Consumer view toggle (client-side only, no DB change)
+    viewAsConsumer: boolean;
+    setViewAsConsumer: (v: boolean) => void;
 }
 
 // ── Context ────────────────────────────────────────────────────────
@@ -63,6 +67,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
     const [isLoading, setIsLoading] = useState(true);
     const [isAuthReady, setIsAuthReady] = useState(false);
+    const [viewAsConsumer, setViewAsConsumer] = useState(false);
 
     // ── Timeout helper — prevents hanging on unresponsive Supabase ──
 
@@ -588,6 +593,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         refreshMeter,
         lookupConsumer,
         completeOnboarding,
+        viewAsConsumer,
+        setViewAsConsumer,
     };
 
     return (

@@ -1,8 +1,10 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import LiquidGauge from '../components/LiquidGauge';
 import ApplianceCard from '../components/ApplianceCard';
 import RechargeModal from '../components/RechargeModal';
+import LanguageSwitcher from '../components/LanguageSwitcher';
 import { Zap, DollarSign, AlertTriangle, ArrowRight, MoreHorizontal, BarChart, ChevronRight, FileText } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Tab, Appliance, ApplianceStatus } from '../types';
@@ -24,12 +26,12 @@ interface HomeProps {
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-/** Greeting based on time of day */
-function getGreeting(): string {
+/** Greeting key based on time of day */
+function getGreetingKey(): string {
     const hour = new Date().getHours();
-    if (hour < 12) return 'Good Morning,';
-    if (hour < 17) return 'Good Afternoon,';
-    return 'Good Evening,';
+    if (hour < 12) return 'greeting.morning';
+    if (hour < 17) return 'greeting.afternoon';
+    return 'greeting.evening';
 }
 
 /** Initials from full name (e.g. "Suman Patra" → "SP") */
@@ -43,13 +45,13 @@ function getInitials(name: string): string {
         .slice(0, 2);
 }
 
-/** Balance health label + color theme */
+/** Balance health key + color theme */
 function getBalanceStatus(balance: number, lastRecharge: number) {
-    if (lastRecharge <= 0) return { label: 'No Data', theme: 'slate' as const };
+    if (lastRecharge <= 0) return { labelKey: 'balance.noData', theme: 'slate' as const };
     const pct = (balance / lastRecharge) * 100;
-    if (pct >= 60) return { label: 'Healthy', theme: 'emerald' as const };
-    if (pct >= 30) return { label: 'Moderate', theme: 'amber' as const };
-    return { label: 'Low Balance', theme: 'rose' as const };
+    if (pct >= 60) return { labelKey: 'balance.healthy', theme: 'emerald' as const };
+    if (pct >= 30) return { labelKey: 'balance.moderate', theme: 'amber' as const };
+    return { labelKey: 'balance.low', theme: 'rose' as const };
 }
 
 const themeColors = {
@@ -62,6 +64,7 @@ const themeColors = {
 // ── Component ──────────────────────────────────────────────────────
 
 const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
+    const { t } = useTranslation();
     const isWeb = viewMode === 'web';
     const isTablet = viewMode === 'tablet';
     const isCompact = isWeb || isTablet;
@@ -106,7 +109,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
     // Derive balance health - use local state which updates after recharge
     const displayBalance = currentBalance > 0 ? currentBalance : s.balance;
     const displayLastRecharge = lastRechargeAmount > 0 ? lastRechargeAmount : s.lastRechargeAmount;
-    const { label: balanceLabel, theme: balanceTheme } = getBalanceStatus(displayBalance, displayLastRecharge);
+    const { labelKey: balanceLabelKey, theme: balanceTheme } = getBalanceStatus(displayBalance, displayLastRecharge);
     const colors = themeColors[balanceTheme];
     const balancePercent = displayLastRecharge > 0 ? (displayBalance / displayLastRecharge) * 100 : 0;
 
@@ -239,16 +242,19 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
         <div className={`pt-6 pb-32 overflow-y-auto h-full no-scrollbar relative ${isWeb ? 'px-8' : 'px-5'}`}>
             {/* Header */}
             <header className="flex justify-between items-center mb-4">
-                <div>
-                    <h1 className={`text-slate-500 font-medium ${isCompact ? 'text-xs' : 'text-sm'}`}>{getGreeting()}</h1>
-                    <h2 className={`font-bold text-slate-800 tracking-tight ${isCompact ? 'text-xl' : 'text-2xl'}`}>{userName}</h2>
+                <div className="min-w-0 flex-1">
+                    <h1 className={`text-slate-500 font-medium truncate ${isCompact ? 'text-xs' : 'text-sm'}`}>{t(getGreetingKey())}</h1>
+                    <h2 className={`font-bold text-slate-800 tracking-tight truncate ${isCompact ? 'text-xl' : 'text-2xl'}`}>{userName}</h2>
                 </div>
-                <button
-                    onClick={() => onNavigate('Profile')}
-                    className={`rounded-full bg-white border border-slate-100 shadow-sm flex items-center justify-center text-slate-800 font-bold hover:shadow-md transition-shadow ${isCompact ? 'w-10 h-10 text-sm' : 'w-12 h-12'}`}
-                >
-                    {initials}
-                </button>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                    <LanguageSwitcher variant="compact" />
+                    <button
+                        onClick={() => onNavigate('Profile')}
+                        className={`rounded-full bg-white border border-slate-100 shadow-sm flex items-center justify-center text-slate-800 font-bold hover:shadow-md transition-shadow ${isCompact ? 'w-10 h-10 text-sm' : 'w-12 h-12'}`}
+                    >
+                        {initials}
+                    </button>
+                </div>
             </header>
 
             {/* BENTO GRID LAYOUT */}
@@ -265,7 +271,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
 
                     <div className={`flex justify-between w-full items-start absolute px-4 z-10 ${isCompact ? 'top-3' : 'top-6 px-6'}`}>
                         <span className={`rounded-full font-bold uppercase tracking-wider border ${isCompact ? 'px-2 py-0.5 text-[10px]' : 'px-3 py-1 text-xs'} ${colors.bg} ${colors.text} ${colors.border}`}>
-                            {statsLoading ? '...' : balanceLabel}
+                            {statsLoading ? '...' : t(balanceLabelKey)}
                         </span>
                         <MoreHorizontal className={`text-slate-300 ${isCompact ? 'w-4 h-4' : ''}`} />
                     </div>
@@ -273,8 +279,8 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                     <LiquidGauge
                         balancePercent={balancePercent}
                         balanceAmount={displayBalance}
-                        label={displayLastRecharge > 0 ? `Recharged ₹${displayLastRecharge}` : 'No recharge yet'}
-                        subLabel={lastRechargeDate !== '—' ? `Recharged on ${lastRechargeDate}` : (s.lastRechargeDate !== '—' ? `Recharged on ${s.lastRechargeDate}` : '')}
+                        label={displayLastRecharge > 0 ? t('balance.rechargedAmount', { amount: displayLastRecharge }) : t('balance.noRechargeYet')}
+                        subLabel={lastRechargeDate !== '—' ? t('balance.rechargedOn', { date: lastRechargeDate }) : (s.lastRechargeDate !== '—' ? t('balance.rechargedOn', { date: s.lastRechargeDate }) : '')}
                         compact={isCompact}
                     />
 
@@ -282,7 +288,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                     <div className={`w-full flex justify-between items-center px-4 relative z-10 ${isCompact ? 'mt-4' : 'mt-10'}`}>
                         <div className="text-center">
                             <p className={`text-slate-400 font-medium uppercase tracking-wide ${isCompact ? 'text-[10px]' : 'text-xs'}`}>
-                                Current Tariff
+                                {t('home.currentTariff')}
                                 {s.currentSlotType !== 'normal' && (
                                     <span className={`ml-1 ${s.currentSlotType === 'peak' ? 'text-rose-400' : 'text-emerald-400'}`}>
                                         ({s.currentSlotType})
@@ -293,7 +299,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                         </div>
                         <div className={`bg-slate-100 ${isCompact ? 'h-8 w-[1px]' : 'h-10 w-[1px]'}`}></div>
                         <div className="text-center">
-                            <p className={`text-slate-400 font-medium uppercase tracking-wide ${isCompact ? 'text-[10px]' : 'text-xs'}`}>Today's Usage</p>
+                            <p className={`text-slate-400 font-medium uppercase tracking-wide ${isCompact ? 'text-[10px]' : 'text-xs'}`}>{t('home.todayUsage')}</p>
                             <div className="flex flex-col">
                                 <span className={`text-slate-800 font-bold leading-none ${isCompact ? 'text-base' : 'text-xl'}`}>₹{s.todayCost.toFixed(2)}</span>
                                 <span className={`text-slate-400 font-bold mt-1 ${isCompact ? 'text-[9px]' : 'text-xs'}`}>{s.todayKwh} kWh</span>
@@ -308,11 +314,11 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                             className={`flex-1 bg-slate-900 text-white font-bold rounded-xl shadow-lg shadow-slate-200 active:scale-95 transition-transform flex items-center justify-center gap-2 ${isCompact ? 'py-2 text-xs' : 'py-3 text-base'}`}
                         >
                             <Zap className={isCompact ? 'w-3 h-3' : 'w-4 h-4'} fill="currentColor" />
-                            Recharge
+                            {t('home.recharge')}
                         </button>
                         <button className={`flex-1 bg-white border border-slate-200 text-slate-600 font-bold rounded-xl active:scale-95 transition-transform flex items-center justify-center gap-2 hover:bg-slate-50 ${isCompact ? 'py-2 text-xs' : 'py-3 text-base'}`}>
                             <FileText className={isCompact ? 'w-3 h-3' : 'w-4 h-4'} />
-                            View Bill
+                            {t('home.viewBill')}
                         </button>
                     </div>
                 </motion.div>
@@ -333,7 +339,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                                 <Zap className={`fill-current ${isCompact ? 'w-4 h-4' : 'w-5 h-5'}`} />
                             </div>
                             <div>
-                                <p className={`text-slate-500 font-medium mb-1 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>Month Forecast</p>
+                                <p className={`text-slate-500 font-medium mb-1 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>{t('home.monthForecast')}</p>
                                 <div className="flex items-end gap-1">
                                     <span className={`font-bold text-slate-800 ${isCompact ? 'text-base' : 'text-xl'}`}>₹{s.monthBill}</span>
                                 </div>
@@ -356,14 +362,14 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                                 <DollarSign className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
                             </div>
                             <div>
-                                <p className={`text-slate-300 font-medium mb-1 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>Total Savings</p>
+                                <p className={`text-slate-300 font-medium mb-1 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>{t('home.totalSavings')}</p>
                                 <div className="flex items-end gap-1">
                                     <span className={`font-bold ${isCompact ? 'text-base' : 'text-xl'}`}>₹{s.monthSavings}</span>
                                     {s.monthSavings > 0 && (
-                                      <span className={`text-emerald-400 mb-0.5 ${isCompact ? 'text-[9px]' : 'text-[10px]'}`}>this month</span>
+                                      <span className={`text-emerald-400 mb-0.5 ${isCompact ? 'text-[9px]' : 'text-[10px]'}`}>{t('home.thisMonth')}</span>
                                     )}
                                 </div>
-                                <p className={`text-slate-400 mt-0.5 ${isCompact ? 'text-[9px]' : 'text-[10px]'}`}>from load shifting</p>
+                                <p className={`text-slate-400 mt-0.5 ${isCompact ? 'text-[9px]' : 'text-[10px]'}`}>{t('home.fromLoadShifting')}</p>
                             </div>
                         </motion.div>
                     </div>
@@ -382,12 +388,12 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                             </div>
                             <div>
                                 <h3 className={`font-bold text-slate-800 ${isCompact ? 'text-sm' : ''}`}>
-                                    {s.currentSlotType === 'peak' ? 'Peak Hours Active' : s.currentSlotType === 'off-peak' ? 'Off-Peak — Save Now!' : 'Normal Tariff Hours'}
+                                    {s.currentSlotType === 'peak' ? t('home.peakActive') : s.currentSlotType === 'off-peak' ? t('home.offPeakSave') : t('home.normalTariff')}
                                 </h3>
                                 <p className={`text-slate-500 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>
                                     {s.currentSlotType === 'peak' && optAlert && optAlert.count > 0
-                                        ? `${optAlert.count} heavy appliance${optAlert.count > 1 ? 's' : ''} • Save ₹${optAlert.savings.toFixed(2)}/hr`
-                                        : `Next: ${s.nextSlotType} at ${s.nextSlotChange} (₹${s.nextSlotRate.toFixed(2)}/kWh)`
+                                        ? t('home.heavyApplianceAlert', { count: optAlert.count, savings: optAlert.savings.toFixed(2) })
+                                        : t('home.nextSlot', { type: s.nextSlotType, time: s.nextSlotChange, rate: s.nextSlotRate.toFixed(2) })
                                     }
                                 </p>
                             </div>
@@ -396,7 +402,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                             onClick={() => onNavigate('Optimizer')}
                             className={`${s.currentSlotType === 'peak' ? 'bg-rose-500' : s.currentSlotType === 'off-peak' ? 'bg-emerald-500' : 'bg-amber-500'} text-white font-bold shadow-lg hover:scale-105 transition-transform ${isCompact ? 'px-3 py-1.5 rounded-lg text-[10px]' : 'px-4 py-2 rounded-xl text-xs'}`}
                         >
-                            {s.currentSlotType === 'peak' ? 'Optimize' : 'Schedule'}
+                            {s.currentSlotType === 'peak' ? t('home.optimize') : t('home.schedule')}
                         </button>
                     </motion.div>
 
@@ -413,10 +419,10 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                                     <BarChart className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
                                 </div>
                                 <div>
-                                    <h3 className={`font-medium text-slate-500 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>Average Monthly Bill</h3>
+                                    <h3 className={`font-medium text-slate-500 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>{t('home.avgMonthlyBill')}</h3>
                                     <div className="flex items-baseline gap-1">
                                         <span className={`font-bold text-slate-800 ${isCompact ? 'text-lg' : 'text-2xl'}`}>₹{(s.yearAverage || s.monthBill).toLocaleString()}</span>
-                                        <span className={`text-slate-400 font-medium ${isCompact ? 'text-[9px]' : 'text-[10px]'}`}>/month avg</span>
+                                        <span className={`text-slate-400 font-medium ${isCompact ? 'text-[9px]' : 'text-[10px]'}`}>{t('home.perMonthAvg')}</span>
                                     </div>
                                 </div>
                             </div>
@@ -434,12 +440,12 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
             {/* Live Appliances Feed - Grid Layout */}
             <section>
                 <div className="flex justify-between items-center mb-3 px-1">
-                    <h3 className={`font-bold text-slate-800 ${isCompact ? 'text-base' : 'text-lg'}`}>My Devices</h3>
+                    <h3 className={`font-bold text-slate-800 ${isCompact ? 'text-base' : 'text-lg'}`}>{t('home.myDevices')}</h3>
                     <button
                         onClick={() => onNavigate('Control')}
                         className={`font-bold text-cyan-600 flex items-center gap-1 bg-cyan-50 rounded-full hover:bg-cyan-100 transition-colors ${isCompact ? 'text-[10px] px-2 py-1' : 'text-xs px-3 py-1.5'}`}
                     >
-                        View All <ArrowRight className={isCompact ? 'w-2 h-2' : 'w-3 h-3'} />
+                        {t('home.viewAll')} <ArrowRight className={isCompact ? 'w-2 h-2' : 'w-3 h-3'} />
                     </button>
                 </div>
 
@@ -450,12 +456,12 @@ const Home: React.FC<HomeProps> = ({ onNavigate, viewMode = 'mobile' }) => {
                 ) : appliances.length === 0 ? (
                     <div className="bg-slate-50 rounded-2xl py-10 text-center">
                         <Zap className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-                        <p className="text-slate-500 font-medium">No devices added yet</p>
+                        <p className="text-slate-500 font-medium">{t('home.noDevices')}</p>
                         <button
                             onClick={() => onNavigate('Control')}
                             className="mt-3 text-cyan-600 font-bold text-sm hover:underline"
                         >
-                            Add your first device →
+                            {t('home.addFirstDevice')}
                         </button>
                     </div>
                 ) : (
