@@ -2,21 +2,65 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Mic, MicOff, Loader2, X, CheckCircle2, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../services/supabase';
-import { toggleAppliance, createSchedule } from '../services/backend';
+import { toggleAppliance as apiToggle, createSchedule } from '../services/backend';
 
 interface VoiceAssistantProps {
     homeId?: string;
     viewMode?: 'mobile' | 'tablet' | 'web';
 }
 
+interface VoiceAppliance {
+    id: string;
+    name: string;
+    category: string;
+    is_controllable: boolean;
+}
+
+/** English, Hindi (transliterated + Devanagari), Bengali (transliterated + Bengali script) */
 const SYNONYMS: Record<string, string[]> = {
-    'ac': ['air conditioner', 'air conditioning', 'a c', 'aircon', 'ac unit'],
-    'tv': ['television', 'tele vision', 'telivision'],
-    'fan': ['ceiling fan', 'table fan', 'pedestal fan'],
-    'geyser': ['water heater', 'heater', 'gyser', 'geezer', 'geyzer'],
-    'refrigerator': ['fridge', 'freezer', 'ref'],
-    'washing machine': ['washer', 'washing machine', 'washing'],
-    'light': ['lighting', 'lights', 'lamp', 'bulb', 'tube light', 'tubelight'],
+    ac: [
+        'air conditioner', 'air conditioning', 'a c', 'aircon', 'ac unit',
+        'एसी', 'এসি',
+    ],
+    refrigerator: [
+        'fridge', 'freezer', 'ref', 'refrigerator',
+        'फ्रिज', 'ফ্রিজ',
+    ],
+    fan: [
+        'ceiling fan', 'table fan', 'pedestal fan', 'fan',
+        'पंखा', 'pankha', 'পাখা', 'pakha', 'ফ্যান', 'phan',
+    ],
+    lighting: [
+        'light', 'lighting', 'lights', 'lamp', 'bulb', 'tube light', 'tubelight',
+        'बल्ब', 'लाइट', 'আলো', 'লাইট',
+    ],
+    tv: ['television', 'tele vision', 'telivision', 'टीवी', 'টিভি'],
+    geyser: ['water heater', 'heater', 'gyser', 'geezer', 'geyzer', 'गीजर', 'গিজার'],
+    'washing machine': ['washer', 'washing machine', 'washing', 'वॉशिंग मशीन'],
+};
+
+const ON_COMMAND =
+    /turn\s+on|switch\s+on|start|activate|on\s+karo|chalu\s+karo|chalu|jalao|kholo|open|chalu\s+koro|on\s+koro/i;
+
+const OFF_COMMAND =
+    /turn\s+off|switch\s+off|stop|deactivate|band\s+karo|off\s+karo|band|bandh|close|bondho\s+koro|off\s+koro/i;
+
+const SCHEDULE_COMMAND = /schedule|set|timer|time\s+pe|baje/i;
+
+const COMMAND_STRIP =
+    /turn\s+on|turn\s+off|switch\s+on|switch\s+off|start|stop|activate|deactivate|schedule|set|timer|time\s+pe|baje|on\s+karo|off\s+karo|chalu\s+karo|chalu\s+koro|bondho\s+koro|band\s+karo|chalu|jalao|kholo|open|band|bandh|close/gi;
+
+const ACTION_DETECT =
+    /turn\s+on|turn\s+off|switch\s+on|switch\s+off|start|stop|schedule|band|chalu|jalao|bondho|on\s+karo|off\s+koro|band\s+karo|activate|deactivate/i;
+
+const normalizeTranscript = (text: string): string =>
+    text.toLowerCase().normalize('NFKC').replace(/\s+/g, ' ').trim();
+
+const parseVoiceAction = (cmd: string): 'on' | 'off' | 'schedule' | null => {
+    if (ON_COMMAND.test(cmd)) return 'on';
+    if (OFF_COMMAND.test(cmd)) return 'off';
+    if (SCHEDULE_COMMAND.test(cmd)) return 'schedule';
+    return null;
 };
 
 const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ homeId, viewMode = 'mobile' }) => {
@@ -24,35 +68,39 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ homeId, viewMode = 'mob
     const [transcript, setTranscript] = useState('');
     const [status, setStatus] = useState<'idle' | 'listening' | 'processing' | 'success' | 'error'>('idle');
     const [message, setMessage] = useState('');
-    const [appliances, setAppliances] = useState<any[]>([]);
+    const [appliances, setAppliances] = useState<VoiceAppliance[]>([]);
     const [isSupported, setIsSupported] = useState(true);
-    const [volumeLevel, setVolumeLevel] = useState(0); // 0-1 for animated mic bar
+    const [volumeLevel, setVolumeLevel] = useState(0);
 
-    const recognitionRef = useRef<any>(null);
+    const recognitionRef = useRef<SpeechRecognition | null>(null);
     const transcriptRef = useRef('');
-    const appliancesRef = useRef<any[]>([]);
+    const appliancesRef = useRef<VoiceAppliance[]>([]);
     const homeIdRef = useRef<string | undefined>(homeId);
     const isListeningRef = useRef(false);
     const shouldRestartRef = useRef(false);
+    const commandHandledRef = useRef(false);
     const volumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => { appliancesRef.current = appliances; }, [appliances]);
     useEffect(() => { homeIdRef.current = homeId; }, [homeId]);
     useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
 
-    // Fetch (or re-fetch) appliances — called on mount AND before each command
-    const fetchAppliances = useCallback(async () => {
+    const fetchAppliances = useCallback(async (): Promise<VoiceAppliance[]> => {
         if (!homeIdRef.current) return [];
-        const { data, error } = await supabase
-            .from('appliances')
-            .select('id, name, category, is_controllable')
-            .eq('home_id', homeIdRef.current)
-            .eq('is_active', true);
-        if (!error && data) {
-            console.log('[Voice] Appliances refreshed:', data.map(a => a.name));
-            setAppliances(data);
-            appliancesRef.current = data;
-            return data;
+        try {
+            const { data, error } = await supabase
+                .from('appliances')
+                .select('id, name, category, is_controllable')
+                .eq('home_id', homeIdRef.current)
+                .eq('is_active', true);
+            if (!error && data) {
+                console.log('[Voice] Appliances refreshed:', data.map(a => a.name));
+                setAppliances(data);
+                appliancesRef.current = data;
+                return data;
+            }
+        } catch (err) {
+            console.warn('[Voice] fetchAppliances failed:', err);
         }
         return appliancesRef.current;
     }, []);
@@ -61,10 +109,27 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ homeId, viewMode = 'mob
         if (homeId) fetchAppliances();
     }, [homeId, fetchAppliances]);
 
-    const findAppliance = useCallback((cmd: string, appList: any[]) => {
-        const stripped = cmd
-            .replace(/turn on|turn off|switch on|switch off|start|stop|schedule|band|chalu/gi, '')
-            .replace(/\b(at|for|from|to|the|my|in|on|off)\b/gi, '')
+    const transcriptMentionsDevice = useCallback((text: string, appList: VoiceAppliance[]): boolean => {
+        const cmd = normalizeTranscript(text);
+        if (appList.some(a => cmd.includes(a.name.toLowerCase()))) return true;
+        return appList.some(appliance => {
+            const name = appliance.name.toLowerCase();
+            const category = (appliance.category || '').toLowerCase();
+            return Object.entries(SYNONYMS).some(([key, synonyms]) => {
+                const terms = [key, ...synonyms];
+                const hit = terms.some(t =>
+                    t.length <= 3 ? new RegExp(`\\b${t}\\b`, 'i').test(cmd) : cmd.includes(t.toLowerCase())
+                );
+                return hit && (name.includes(key) || category.includes(key) || terms.some(t => name.includes(t.toLowerCase())));
+            });
+        });
+    }, []);
+
+    const findAppliance = useCallback((cmd: string, appList: VoiceAppliance[]): VoiceAppliance | null => {
+        const normalized = normalizeTranscript(cmd);
+        const stripped = normalized
+            .replace(COMMAND_STRIP, '')
+            .replace(/\b(at|for|from|to|the|my|in)\b/gi, '')
             .replace(/\d{1,2}(:\d{2})?\s*(a\.?m\.?|p\.?m\.?)?/gi, '')
             .trim();
 
@@ -73,24 +138,27 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ homeId, viewMode = 'mob
 
         const sorted = [...appList].sort((a, b) => b.name.length - a.name.length);
 
-        // 1. Direct name
-        const direct = sorted.find(a => cmd.includes(a.name.toLowerCase()));
+        const direct = sorted.find(a => normalized.includes(a.name.toLowerCase()));
         if (direct) return direct;
 
-        // 2. Synonym
         for (const appliance of sorted) {
             const name = appliance.name.toLowerCase();
+            const category = (appliance.category || '').toLowerCase();
             for (const [key, synonyms] of Object.entries(SYNONYMS)) {
                 const terms = [key, ...synonyms];
-                const hit = terms.some(t =>
-                    t.length <= 3 ? hasWord(stripped, t) || hasWord(cmd, t) : stripped.includes(t) || cmd.includes(t)
-                );
-                if (hit && (hasWord(name, key) || terms.some(t => name.includes(t)))) return appliance;
+                const hit = terms.some(t => {
+                    const term = t.toLowerCase();
+                    return term.length <= 3
+                        ? hasWord(stripped, term) || hasWord(normalized, term)
+                        : stripped.includes(term) || normalized.includes(term);
+                });
+                if (hit && (hasWord(name, key) || category.includes(key) || terms.some(t => name.includes(t.toLowerCase())))) {
+                    return appliance;
+                }
             }
         }
 
-        // 3. Partial word (4+ chars)
-        const words = stripped.split(/\s+/).filter(w => w.length > 3);
+        const words = stripped.split(/\s+/).filter(w => w.length > 2);
         return sorted.find(a => words.some(w => a.name.toLowerCase().includes(w))) ?? null;
     }, []);
 
@@ -114,22 +182,29 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ homeId, viewMode = 'mob
         return null;
     }, []);
 
-    const processCommand = useCallback(async (cmd: string) => {
+    const processCommand = useCallback(async (rawCmd: string) => {
+        const cmd = normalizeTranscript(rawCmd);
+        if (!cmd) return;
         console.log('[Voice] Processing:', cmd);
+        commandHandledRef.current = true;
         setStatus('processing');
 
-        // Re-fetch fresh appliance list right before searching
-        const appl = await fetchAppliances();
-        const hid = homeIdRef.current;
+        let appl: VoiceAppliance[];
+        try {
+            appl = await fetchAppliances();
+        } catch {
+            setStatus('error');
+            setMessage('Could not load devices. Check your connection and try again.');
+            setTimeout(() => { setStatus('idle'); setMessage(''); }, 5000);
+            return;
+        }
 
-        let action: 'on' | 'off' | 'schedule' | null = null;
-        if (/turn on|switch on|start|on karo|chalu|kholo|open/i.test(cmd)) action = 'on';
-        else if (/turn off|switch off|stop|band|off karo|bandh|close/i.test(cmd)) action = 'off';
-        else if (/schedule|set|timer|time pe|baje/i.test(cmd)) action = 'schedule';
+        const hid = homeIdRef.current;
+        const action = parseVoiceAction(cmd);
 
         if (!action) {
             setStatus('error');
-            setMessage('Action not recognized. Try "Turn on AC" or "Schedule fan at 9 PM"');
+            setMessage('Action not recognized. Try "Turn on AC", "AC chalu karo", or "এসি on koro"');
             setTimeout(() => { setStatus('idle'); setMessage(''); }, 4000);
             return;
         }
@@ -150,15 +225,16 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ homeId, viewMode = 'mob
 
         try {
             if (action === 'on' || action === 'off') {
-                // ✅ Use the same backend API as manual toggle (Tuya-aware, proper auth)
                 const apiAction = action === 'on' ? 'turn_on' : 'turn_off';
-                const result = await toggleAppliance(target.id, apiAction);
+                const result = await apiToggle(target.id, apiAction);
+                if (!result.success) {
+                    throw new Error(result.message || 'Toggle failed');
+                }
                 setStatus('success');
                 setMessage(`✅ ${target.name} turned ${action}`);
             } else {
                 const timeStr = parseTime(cmd);
                 if (timeStr && hid) {
-                    // ✅ Use backend createSchedule so APScheduler registers the job
                     await createSchedule(target.id, timeStr, null, 'daily');
                     setStatus('success');
                     setMessage(`✅ ${target.name} scheduled for ${timeStr}`);
@@ -167,29 +243,45 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ homeId, viewMode = 'mob
                     setMessage('Could not detect time. Try: "Schedule AC at 9 PM"');
                 }
             }
-        } catch (err: any) {
+        } catch (err: unknown) {
+            const errMsg = err instanceof Error ? err.message : 'Unknown error';
+            const isNetwork = /fetch|network|failed to fetch|timeout|connection|aborted/i.test(errMsg);
+            const isPermission = /permission denied|42501|service_role/i.test(errMsg);
             setStatus('error');
-            setMessage(`Failed: ${err.message || 'Unknown error'}`);
+            setMessage(
+                isPermission
+                    ? 'Server permission error. Ensure backend uses the Supabase service_role key.'
+                    : isNetwork
+                        ? 'Backend unreachable. Start the API on port 8000 and try again.'
+                        : `Failed: ${errMsg}`,
+            );
         }
-        setTimeout(() => { setStatus('idle'); setMessage(''); setTranscript(''); transcriptRef.current = ''; }, 5000);
-    }, [findAppliance, parseTime]);
+        setTimeout(() => {
+            setStatus('idle');
+            setMessage('');
+            setTranscript('');
+            transcriptRef.current = '';
+        }, 5000);
+    }, [findAppliance, parseTime, fetchAppliances]);
 
     const processCommandRef = useRef(processCommand);
     useEffect(() => { processCommandRef.current = processCommand; }, [processCommand]);
 
-    // Init SpeechRecognition — ONE time, no getUserMedia conflict
     useEffect(() => {
-        const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-        if (!SR) { setIsSupported(false); return; }
+        const SR = window.SpeechRecognition
+            || (window as Window & { webkitSpeechRecognition?: typeof SpeechRecognition }).webkitSpeechRecognition;
+        if (!SR) {
+            setIsSupported(false);
+            return;
+        }
 
         const r = new SR();
-        r.continuous = true;      // keep listening through silence
-        r.interimResults = true;  // show words in real-time
+        r.continuous = true;
+        r.interimResults = true;
         r.maxAlternatives = 3;
-        r.lang = 'en-IN';         // Indian English
+        r.lang = 'en-IN';
 
-        r.onresult = (event: any) => {
-            // Animate volume level when speech comes in
+        r.onresult = (event: SpeechRecognitionEvent) => {
             setVolumeLevel(0.8);
             if (volumeTimerRef.current) clearTimeout(volumeTimerRef.current);
             volumeTimerRef.current = setTimeout(() => setVolumeLevel(0), 600);
@@ -209,51 +301,51 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ homeId, viewMode = 'mob
 
             setTranscript(transcriptRef.current || interimText);
 
-            // Auto-stop when we detect a full command
             if (newFinal.trim()) {
-                const combined = transcriptRef.current.toLowerCase();
-                const hasAction = /turn on|turn off|switch on|switch off|start|stop|schedule|band|chalu/i.test(combined);
-                const hasDevice = appliancesRef.current.some(a =>
-                    combined.includes(a.name.toLowerCase()) ||
-                    Object.values(SYNONYMS).flat().some(s => combined.includes(s))
-                );
-                if (hasAction && hasDevice) {
-                    console.log('[Voice] Full command detected:', combined);
-                    shouldRestartRef.current = false;
-                    r.stop();
-                    processCommandRef.current(combined);
+                const combined = normalizeTranscript(transcriptRef.current);
+                if (ACTION_DETECT.test(combined)) {
+                    const hasDevice =
+                        appliancesRef.current.length === 0
+                        || transcriptMentionsDevice(combined, appliancesRef.current);
+                    if (hasDevice) {
+                        console.log('[Voice] Auto command detected:', combined);
+                        shouldRestartRef.current = false;
+                        r.stop();
+                        void processCommandRef.current(combined);
+                    }
                 }
             }
         };
 
         r.onend = () => {
-            console.log('[Voice] onend, shouldRestart:', shouldRestartRef.current);
             if (shouldRestartRef.current && isListeningRef.current) {
-                // Keep alive — restart immediately
                 setTimeout(() => {
-                    try { r.start(); } catch (_) { }
+                    try { r.start(); } catch { /* already running */ }
                 }, 100);
             } else {
                 setIsListening(false);
                 setVolumeLevel(0);
+                const pending = transcriptRef.current.trim();
+                if (pending && !commandHandledRef.current) {
+                    void processCommandRef.current(pending);
+                }
+                commandHandledRef.current = false;
             }
         };
 
-        r.onerror = (event: any) => {
+        r.onerror = (event: SpeechRecognitionErrorEvent) => {
             console.error('[Voice] onerror:', event.error);
-            // Non-fatal — let onend restart
             if (['no-speech', 'aborted', 'phrases-not-supported'].includes(event.error)) return;
 
-            // Fatal errors
             shouldRestartRef.current = false;
             setIsListening(false);
             setVolumeLevel(0);
 
             const msgs: Record<string, string> = {
-                'not-allowed': '🎤 Mic blocked — click the mic icon in the address bar and allow.',
-                'network': '🌐 Network error reaching speech service.',
-                'audio-capture': '🎤 No microphone detected on this device.',
-                'service-not-allowed': '🔒 Speech service requires a secure connection.',
+                'not-allowed': '🎤 Mic blocked — allow microphone in browser settings.',
+                network: '🌐 Network error reaching speech service.',
+                'audio-capture': '🎤 No microphone detected.',
+                'service-not-allowed': '🔒 Speech requires HTTPS or localhost.',
             };
             setStatus('error');
             setMessage(msgs[event.error] ?? `Error: ${event.error}`);
@@ -261,20 +353,30 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ homeId, viewMode = 'mob
         };
 
         recognitionRef.current = r;
-    }, []);
+    }, [transcriptMentionsDevice]);
 
     const toggleListening = () => {
         if (isListening) {
             shouldRestartRef.current = false;
-            try { recognitionRef.current?.stop(); } catch (_) { }
-            setIsListening(false);
-            setStatus('idle');
-            setMessage('');
-            setTranscript('');
-            transcriptRef.current = '';
-            setVolumeLevel(0);
+            const pending = transcriptRef.current.trim();
+            try { recognitionRef.current?.stop(); } catch { /* noop */ }
+            if (!pending) {
+                setIsListening(false);
+                setStatus('idle');
+                setMessage('');
+                setTranscript('');
+                transcriptRef.current = '';
+                setVolumeLevel(0);
+            }
         } else {
+            if (appliances.length === 0 && homeId) {
+                setStatus('error');
+                setMessage('No devices found. Add appliances in Control first.');
+                setTimeout(() => { setStatus('idle'); setMessage(''); }, 6000);
+                return;
+            }
             transcriptRef.current = '';
+            commandHandledRef.current = false;
             setTranscript('');
             setMessage('');
             setStatus('listening');
@@ -282,9 +384,12 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ homeId, viewMode = 'mob
             shouldRestartRef.current = true;
             try {
                 recognitionRef.current?.start();
-            } catch (err: any) {
-                console.warn('[Voice] start error:', err?.message);
-                // Already running — likely fine
+            } catch (err: unknown) {
+                console.warn('[Voice] start error:', err instanceof Error ? err.message : err);
+                setStatus('error');
+                setMessage('Could not start microphone. Use Chrome or Edge.');
+                setIsListening(false);
+                setTimeout(() => { setStatus('idle'); setMessage(''); }, 5000);
             }
         }
     };
@@ -292,7 +397,6 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ homeId, viewMode = 'mob
     if (!isSupported) return null;
 
     return (
-        // absolute inside the phone frame — sits above the lightning button (bottom-28)
         <div className={`absolute z-[54] right-4 ${viewMode === 'mobile' ? 'bottom-44' : 'bottom-40'}`}>
             <AnimatePresence>
                 {status !== 'idle' && (
@@ -303,7 +407,6 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ homeId, viewMode = 'mob
                         className={`absolute bottom-full mb-3 right-0 w-72 rounded-2xl shadow-xl bg-white border overflow-hidden
                             ${status === 'error' ? 'border-rose-100' : status === 'success' ? 'border-emerald-100' : 'border-indigo-100'}`}
                     >
-                        {/* Top bar */}
                         <div className={`px-3 py-2 flex items-center justify-between
                             ${status === 'listening' ? 'bg-indigo-50' : status === 'success' ? 'bg-emerald-50' : status === 'error' ? 'bg-rose-50' : 'bg-slate-50'}`}>
                             <div className="flex items-center gap-2">
@@ -322,14 +425,12 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ homeId, viewMode = 'mob
                                                 : 'Notice'}
                                 </span>
                             </div>
-                            <button onClick={() => { setStatus('idle'); setMessage(''); }} className="p-0.5 rounded-full hover:bg-black/5">
+                            <button type="button" onClick={() => { setStatus('idle'); setMessage(''); }} className="p-0.5 rounded-full hover:bg-black/5">
                                 <X className="w-3 h-3 text-slate-400" />
                             </button>
                         </div>
 
-                        {/* Body */}
                         <div className="px-3 py-2.5 space-y-2">
-                            {/* Voice activity bar — animated when speech detected */}
                             {status === 'listening' && (
                                 <div className="flex items-center gap-1 h-5">
                                     {[...Array(12)].map((_, i) => (
@@ -343,24 +444,29 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ homeId, viewMode = 'mob
                                 </div>
                             )}
 
-                            {/* Live transcript */}
                             {(transcript || status === 'listening') && (
                                 <p className="text-[11px] text-slate-600 italic min-h-[1rem]">
                                     &ldquo;{transcript || 'Say something...'}&rdquo;
                                 </p>
                             )}
 
-                            {/* Result */}
                             {message && (
                                 <p className={`text-[11px] font-medium ${status === 'error' ? 'text-rose-600' : 'text-emerald-600'}`}>
                                     {message}
                                 </p>
                             )}
 
-                            {/* Hint */}
-                            {status === 'listening' && !transcript && (
+                            {status === 'listening' && (
                                 <p className="text-[10px] text-slate-400">
-                                    Try: <span className="font-medium text-slate-500">"Turn on AC"</span> or <span className="font-medium text-slate-500">"Schedule fan at 9 PM"</span>
+                                    {transcript
+                                        ? <span className="text-indigo-600 font-medium">Tap mic again to run command</span>
+                                        : (
+                                            <>
+                                                EN/HI/BN: <span className="font-medium text-slate-500">&quot;Turn on AC&quot;</span>
+                                                {' · '}
+                                                <span className="font-medium text-slate-500">&quot;AC chalu karo&quot;</span>
+                                            </>
+                                        )}
                                 </p>
                             )}
                         </div>
@@ -368,8 +474,8 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ homeId, viewMode = 'mob
                 )}
             </AnimatePresence>
 
-            {/* Mic Button — styled to match FloatingOptimizeButton */}
             <motion.button
+                type="button"
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={toggleListening}
