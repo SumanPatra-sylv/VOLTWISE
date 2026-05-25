@@ -140,8 +140,18 @@ async def toggle_appliance(
     except HTTPException:
         raise
     except Exception as e:
+        err = str(e)
         logger.error(f"[Toggle] Adapter error for {appliance_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Adapter error: {str(e)}")
+        if "42501" in err or "permission denied" in err.lower():
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Database permission denied. In backend/.env use the real "
+                    "service_role key (not anon), then run sql/10_grant_service_role.sql "
+                    "in Supabase SQL Editor and restart the backend."
+                ),
+            )
+        raise HTTPException(status_code=500, detail=f"Adapter error: {err}")
 
     # Log control action — non-fatal if this fails (don't block the response)
     try:
