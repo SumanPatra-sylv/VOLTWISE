@@ -31,6 +31,16 @@ class Settings(BaseSettings):
     # Gemini AI (optional)
     gemini_api_key: str = ""
 
+    # NILM Replay Configuration
+    replay_data_path: str = "nilm-project/data/processed/replay_windows.npy"
+    replay_mode_enabled: bool = True
+    window_size: int = 60
+    sample_interval_seconds: int = 5
+    replay_loop_enabled: bool = True
+    noise_enabled: bool = False
+    noise_stddev: float = 5.0
+    max_valid_power_w: float = 20000.0
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 

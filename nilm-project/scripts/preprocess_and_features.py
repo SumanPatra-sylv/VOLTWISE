@@ -28,7 +28,7 @@ from scipy import stats
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 # Input directory containing CSVs
-RAW_DATA_DIR = PROJECT_DIR / "data" / "raw" / "iawe"
+RAW_DATA_DIR = PROJECT_DIR / "data" / "electricity"
 
 # Output directory for processed data
 PROCESSED_DIR = PROJECT_DIR / "data" / "processed"
@@ -189,13 +189,18 @@ def find_aggregate_file(data_dir):
 
 
 def find_appliance_file(data_dir, appliance):
-    """Find CSV file for a specific appliance."""
-    csv_files = list(data_dir.glob("*.csv"))
-    
-    for f in csv_files:
-        if appliance.lower() in f.name.lower():
+    """Find CSV file for a specific appliance based on iAWE mapping."""
+    mapping = {
+        "ac": "4.csv",
+        "fridge": "3.csv",
+        "washing_machine": "6.csv",
+        "television": "10.csv"
+    }
+    filename = mapping.get(appliance.lower())
+    if filename:
+        f = data_dir / filename
+        if f.exists():
             return f
-    
     return None
 
 
@@ -317,28 +322,22 @@ def main():
     print("Loading Aggregate Power")
     print("-" * 40)
     
-    if AGG_FILE:
-        agg_path = RAW_DATA_DIR / AGG_FILE
-    else:
-        agg_path = find_aggregate_file(RAW_DATA_DIR)
+    mains1_path = RAW_DATA_DIR / "1.csv"
+    mains2_path = RAW_DATA_DIR / "2.csv"
     
-    if agg_path is None or not agg_path.exists():
-        print("[ERROR] Aggregate file not found!")
-        print("")
-        print("Auto-detection looks for filenames containing: agg, mains, aggregate")
-        print("")
-        print("Available files:")
-        for f in csv_files:
-            print(f"  - {f.name}")
-        print("")
-        print("Please set AGG_FILE at the top of this script, e.g.:")
-        print('  AGG_FILE = "your_mains_file.csv"')
+    if not mains1_path.exists() or not mains2_path.exists():
+        print("[ERROR] Mains files 1.csv or 2.csv not found in RAW_DATA_DIR!")
         return 1
+        
+    mains1 = load_csv(mains1_path, name="mains1")
+    mains2 = load_csv(mains2_path, name="mains2")
     
-    agg_series = load_csv(agg_path, name="aggregate")
-    if agg_series is None:
-        print("[ERROR] Failed to load aggregate file")
+    if mains1 is None or mains2 is None:
+        print("[ERROR] Failed to load mains1 or mains2")
         return 1
+        
+    agg_series = mains1.add(mains2, fill_value=0)
+    print(f"  Summed aggregate samples: {len(agg_series)}")
     
     # ========================================================================
     # Load appliance data
