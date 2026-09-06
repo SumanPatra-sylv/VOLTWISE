@@ -96,6 +96,7 @@ const Onboarding: React.FC = () => {
     // Auth listener handles the rest — if onboarding not done, useEffect jumps to consumer
   };
 
+
   // ── Handle admin login ─────────────────────────────────────────
   const handleAdminLogin = async () => {
     if (!email.trim()) return setError('Email is required');

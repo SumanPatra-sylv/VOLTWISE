@@ -17,6 +17,8 @@ import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from abc import ABC, abstractmethod
+import json
 
 import numpy as np
 from scipy import stats
@@ -26,6 +28,16 @@ except ImportError:
     create_client = None  # type: ignore
 
 logger = logging.getLogger("voltwise.nilm")
+
+
+class TelemetryUnavailableError(Exception):
+    """Raised when telemetry source is missing, corrupt, or unreachable."""
+    pass
+
+
+class MalformedTelemetryError(ValueError):
+    """Raised when a retrieved telemetry window fails strict contract validation."""
+    pass
 
 # ── Paths ──────────────────────────────────────────────────────────
 
@@ -145,82 +157,114 @@ def extract_features(window: np.ndarray) -> dict[str, float] | None:
 
 # ── Synthetic Meter Generator ──────────────────────────────────────
 
-class SyntheticMeterGenerator:
-    """Generates realistic aggregate meter readings for demo mode."""
+class TelemetrySource(ABC):
+    """Abstract Base Class defining the contract for telemetry ingest."""
+    
+    @abstractmethod
+    def initialize(self) -> None:
+        """Deterministic startup validation and loading."""
+        pass
+        
+    @abstractmethod
+    def get_current_window(self) -> np.ndarray:
+        """Return a 60-sample window of aggregate active power (W)."""
+        pass
+        
+    @abstractmethod
+    def get_health_status(self) -> dict[str, Any]:
+        """Return diagnostics about source operations."""
+        pass
 
-    WINDOW_SIZE = 60   # 60 samples at 5-second intervals = 5-minute window
-    BASE_LOAD = 300    # Watts — always-on standby loads
 
-    def generate_window(self) -> np.ndarray:
-        """Generate a 5-minute window (60 samples) of aggregate power readings."""
-        now = datetime.now()
-        hour = now.hour
-        minute = now.minute
+class ReplayTelemetrySource(TelemetrySource):
+    """Production-grade telemetry replay source using held-out real data."""
+    
+    def __init__(self, settings: Any):
+        self.settings = settings
+        self._windows: np.ndarray | None = None
+        self._metadata: dict[str, Any] = {}
+        self._index = 0
+        self._initialized = False
+        self._health = "UNKNOWN"
+        self._failure_count = 0
+        self._last_read_time: datetime | None = None
+        self._total_windows = 0
 
-        # Time-of-day multiplier (higher during peak hours)
-        if 8 <= hour < 12 or 18 <= hour < 22:
-            tod_mult = 1.4   # Peak
-        elif 0 <= hour < 6:
-            tod_mult = 0.5   # Night
-        else:
-            tod_mult = 1.0   # Normal
+    def initialize(self) -> None:
+        if self._initialized:
+            return
+        try:
+            data_path = PROJECT_ROOT / self.settings.replay_data_path
+            meta_path = data_path.with_name("replay_metadata.json")
+            
+            if not data_path.exists():
+                raise FileNotFoundError(f"Replay data file not found at {data_path}")
+                
+            self._windows = np.load(data_path)
+            self._total_windows = len(self._windows)
+            
+            if meta_path.exists():
+                with open(meta_path, "r") as f:
+                    self._metadata = json.load(f)
+                    
+            if self._windows.ndim != 2 or self._windows.shape[1] != self.settings.window_size:
+                raise ValueError(f"Invalid replay window shape: {self._windows.shape}")
+                
+            self._health = "HEALTHY"
+            self._initialized = True
+            logger.info("[STARTUP] ReplayTelemetrySource successfully initialized with %d windows", self._total_windows)
+        except Exception as e:
+            self._health = "FAILED"
+            self._failure_count += 1
+            logger.error("[STARTUP] Failed to initialize ReplayTelemetrySource: %s", e)
+            raise TelemetryUnavailableError(f"Telemetry source failed initialization: {e}") from e
 
-        # Base load with sinusoidal variation + noise
-        base = np.full(self.WINDOW_SIZE, self.BASE_LOAD * tod_mult)
+    def get_current_window(self) -> np.ndarray:
+        if not self._initialized:
+            self.initialize()
+            
+        if self._windows is None or len(self._windows) == 0:
+            raise TelemetryUnavailableError("Replay data is empty or not loaded")
+            
+        window = self._windows[self._index].copy()
+        self._index = (self._index + 1) % self._total_windows
+        
+        if self.settings.noise_enabled:
+            noise = np.random.normal(0, self.settings.noise_stddev, len(window))
+            window = window + noise
+            
+        # Clip aggregate power so it's never negative after adding noise
+        window = np.clip(window, 0.0, None)
+            
+        self._last_read_time = datetime.now()
+        return window
 
-        # Simulate appliance contributions with realistic patterns
-        for name, profile in APPLIANCE_PROFILES.items():
-            start_h, end_h = profile["active_hours"]
-            duty = profile["duty_cycle"]
+    def get_health_status(self) -> dict[str, Any]:
+        return {
+            "status": self._health,
+            "total_windows": self._total_windows,
+            "current_index": self._index,
+            "last_read_time": self._last_read_time.isoformat() if self._last_read_time else None,
+            "failure_count": self._failure_count
+        }
 
-            if start_h <= hour < end_h and random.random() < duty:
-                low, high = profile["on_range"]
-                # Realistic power with minor fluctuations
-                power = random.uniform(low, high)
-                noise = np.random.normal(0, power * 0.03, self.WINDOW_SIZE)
-                base += power + noise
 
-        # Add overall noise
-        noise = np.random.normal(0, 15, self.WINDOW_SIZE)
-        base += noise
-
-        return np.clip(base, 50, 8000)
-
-    def generate_timeline(self, hours: int = 24) -> list[dict[str, Any]]:
-        """Generate hourly aggregate readings for the last N hours (24 points max)."""
-        timeline = []
-        now = datetime.now()
-
-        for i in range(hours):  # 1 point per hour
-            ts = now - timedelta(hours=hours - i)
-            hour = ts.hour
-
-            # Base load with time-of-day variation
-            if 8 <= hour < 12 or 18 <= hour < 22:
-                mult = 1.4
-            elif 0 <= hour < 6:
-                mult = 0.5
-            else:
-                mult = 1.0
-
-            # Aggregate power
-            total_w = self.BASE_LOAD * mult
-            for name, profile in APPLIANCE_PROFILES.items():
-                start_h, end_h = profile["active_hours"]
-                if start_h <= hour < end_h:
-                    prob = profile["duty_cycle"] * mult
-                    if random.random() < prob:
-                        low, high = profile["on_range"]
-                        total_w += random.uniform(low, high)
-
-            total_w += random.gauss(0, 20)
-            timeline.append({
-                "timestamp": ts.isoformat(),
-                "time_label": f"{hour:02d}:00",  # pre-formatted for frontend
-                "watts": round(max(50, total_w), 1),
-            })
-
-        return timeline
+def validate_window(window: np.ndarray, expected_size: int = 60, max_valid_power_w: float = 20000.0) -> bool:
+    """Enforce exact window length, no NaN/Inf, and residential active power limits."""
+    if window is None:
+        logger.error("[VALIDATION] Window is None")
+        return False
+    if len(window) != expected_size:
+        logger.error("[VALIDATION] Size %d, expected %d", len(window), expected_size)
+        return False
+    if np.any(np.isnan(window)) or np.any(np.isinf(window)):
+        logger.error("[VALIDATION] Window contains NaN or Inf values")
+        return False
+    # Clamp or reject extreme values (0W to 20kW residential envelope)
+    if np.any(window < 0.0) or np.any(window > max_valid_power_w):
+        logger.error("[VALIDATION] Window contains power values outside residential limit [0W - %dW]", max_valid_power_w)
+        return False
+    return True
 
 
 # ── NILM Disaggregator (Real XGBoost Models) ──────────────────────
@@ -340,8 +384,17 @@ class NilmDisaggregator:
     @property
     def model_info(self) -> dict:
         """Return metadata about loaded models."""
+        meta_path = MODELS_DIR / "model_metadata.json"
+        version = "unknown"
+        if meta_path.exists():
+            try:
+                with open(meta_path, "r") as f:
+                    version = json.load(f).get("version", "unknown")
+            except Exception:
+                pass
         return {
             "models_loaded": len(self._models),
+            "model_version": version,
             "appliances": list(self._models.keys()),
             "feature_count": len(self._feature_columns),
             "models_dir": str(MODELS_DIR),
@@ -448,7 +501,8 @@ class SmartPlugReader:
         if not profile:
             return None
 
-        hour = datetime.now().hour
+        import os
+        hour = int(os.getenv("SIMULATED_HOUR", "20"))
         start_h, end_h = profile["active_hours"]
         duty = profile["duty_cycle"]
 
@@ -491,9 +545,16 @@ class PowerAnalyticsService:
     COMPUTE_INTERVAL = 10  # seconds between background computations
 
     def __init__(self):
-        self.meter = SyntheticMeterGenerator()
+        from app.config import get_settings
+        self.settings = get_settings()
+        
         self.nilm = NilmDisaggregator()
         self.smart_plug = SmartPlugReader()
+        
+        if self.settings.replay_mode_enabled:
+            self.telemetry_source = ReplayTelemetrySource(self.settings)
+        else:
+            raise NotImplementedError("Live telemetry streaming source not implemented.")
 
         # Pre-computed results (written by background thread, read by API)
         self._snapshot: dict[str, Any] = {}
@@ -503,6 +564,10 @@ class PowerAnalyticsService:
         self._ready = False
         self._last_home_id = "demo"
         self._supabase = None
+        self._consecutive_failures = 0
+        self._is_stale = False
+        self._stale_since: str | None = None
+        self._last_valid_timestamp: str | None = None
 
         # Background thread
         self._thread: threading.Thread | None = None
@@ -513,6 +578,11 @@ class PowerAnalyticsService:
 
     def initialize(self):
         """Load NILM models and start background computation thread."""
+        try:
+            self.telemetry_source.initialize()
+        except Exception as e:
+            logger.error("[STARTUP] Failed to initialize telemetry source: %s", e)
+            
         self.nilm.load_models()
 
         # Build Supabase client for appliance status lookup
@@ -522,8 +592,7 @@ class PowerAnalyticsService:
             s = get_settings()
             if create_client and s.supabase_url and s.supabase_service_role_key:
                 self._supabase = create_client(s.supabase_url, s.supabase_service_role_key)
-                self.smart_plug.set_db(self._supabase)
-                logger.info("NILM: Supabase client initialized (smart plug reader wired)")
+                logger.info("NILM: Supabase client initialized")
         except Exception as e:
             logger.warning("NILM: Supabase not available (%s) — using synthetic profiles", e)
         # Compute initial data
@@ -586,83 +655,69 @@ class PowerAnalyticsService:
         """
         self._last_home_id = home_id
 
-        # 1. Get ON appliances from Supabase (with their DB names + categories)
-        on_appliances = self._get_on_appliances(home_id)
-
-        # 2. Build appliance_data — one entry per ON appliance with synthetic watts
-        appliance_data = []
-        for db_app in on_appliances:
-            category = db_app.get("category", "other")
-            name = db_app.get("name") or category.replace("_", " ").title()
-            rated_w = db_app.get("rated_power_w") or 100
-
-            # Map Supabase category → NILM profile key for watt range
-            CATEGORY_TO_PROFILE = {
-                "ac": "ac",
-                "refrigerator": "fridge",
-                "washing_machine": "washing_machine",
-                "tv": "television",
-            }
-            profile_key = CATEGORY_TO_PROFILE.get(category, category)
-            profile = APPLIANCE_PROFILES.get(profile_key, {})
-
-            # Generate synthetic watts within the profile range (realistic variation)
-            if profile.get("on_range"):
-                low, high = profile["on_range"]
-                # Clamp to rated power ±20%
-                low = min(low, rated_w * 0.8)
-                high = min(high, rated_w * 1.2)
-                est_watts = round(random.uniform(low, high) + random.gauss(0, 10), 1)
-                est_watts = max(10, est_watts)
+        # 1. Fetch from TelemetrySource and validate (never fabricate values)
+        try:
+            aggregate_window = self.telemetry_source.get_current_window()
+            if not validate_window(aggregate_window, self.settings.window_size, self.settings.max_valid_power_w):
+                raise MalformedTelemetryError("Telemetry window failed contract validation")
+            self._consecutive_failures = 0
+            if self._is_stale:
+                logger.info("[RECOVERY] Telemetry source recovered. Ingestion running normally.")
+            self._is_stale = False
+            self._stale_since = None
+            self._last_valid_timestamp = datetime.now().isoformat()
+        except Exception as e:
+            self._consecutive_failures += 1
+            if not self._is_stale:
+                self._stale_since = datetime.now().isoformat()
+            self._is_stale = True
+            logger.warning("[DEGRADATION] Telemetry ingest failed (consecutive failures: %d): %s", self._consecutive_failures, e)
+            
+            if self._snapshot:
+                # Update status of existing snapshot to stale (DEGRADED state)
+                self._snapshot["is_stale"] = True
+                self._snapshot["diagnostics"]["consecutive_failures"] = self._consecutive_failures
+                self._snapshot["diagnostics"]["source_health"]["status"] = "DEGRADED"
+                self._snapshot["diagnostics"]["stale_since"] = self._stale_since
+                return
             else:
-                # No profile — use rated power ±15% random
-                est_watts = round(rated_w * random.uniform(0.85, 1.15), 1)
+                logger.error("[FAILURE] Telemetry failure and no valid snapshot exists to serve stale data (FAILED state).")
+                return  # Return cleanly to keep worker loop alive.
 
-            # Smart plug override — only if it returns real non-zero watts
-            source = "nilm"
-            if self.smart_plug.has_smart_plug(profile_key):
-                plug_data = self.smart_plug.read_power(profile_key)
-                plug_watts = plug_data.get("estimated_watts", 0) if plug_data else 0
-                if plug_watts > 0:
-                    est_watts = plug_watts
-                    source = "smart_plug"
-                # else: plug returned 0 → keep synthetic watts, mark as nilm
+        # 2. Run real NILM inference using the loaded XGBoost models
+        appliance_data = self.nilm.disaggregate(aggregate_window)
 
-            confidence = profile.get("duty_cycle", 0.8)  # reuse duty_cycle as confidence
-
-            appliance_data.append({
-                "appliance": profile_key or category,
-                "label": name,
-                "category": category,
-                "is_on": True,
-                "estimated_watts": est_watts,
-                "confidence": round(confidence, 2),
-                "source": source,
-            })
+        aggregate_watts = round(float(np.mean(aggregate_window)), 1)
+        predicted_total = round(sum(a["estimated_watts"] for a in appliance_data), 1)
+        untracked_watts = round(max(0.0, aggregate_watts - predicted_total), 1)
 
         # 3. Standby & Others (always present)
-        base_untracked = round(random.uniform(30, 80), 1)
         appliance_data.append({
             "appliance": "standby_others",
             "label": "Standby & Others",
             "category": "other",
             "is_on": True,
-            "estimated_watts": base_untracked,
+            "estimated_watts": untracked_watts,
             "confidence": 0.6,
             "source": "estimated",
         })
-
-        total_disaggregated = sum(a["estimated_watts"] for a in appliance_data)
-        aggregate_watts = round(total_disaggregated, 1)
 
         self._snapshot = {
             "timestamp": datetime.now().isoformat(),
             "aggregate_watts": aggregate_watts,
             "appliances": appliance_data,
-            "total_disaggregated": aggregate_watts,
-            "untracked_watts": 0,
+            "total_disaggregated": predicted_total,
+            "untracked_watts": untracked_watts,
             "smart_plug_count": sum(1 for a in appliance_data if a["source"] == "smart_plug"),
             "nilm_count": sum(1 for a in appliance_data if a["source"] == "nilm"),
+            "mode": "simulation",
+            "is_stale": self._is_stale,
+            "diagnostics": {
+                "source_health": self.telemetry_source.get_health_status(),
+                "consecutive_failures": self._consecutive_failures,
+                "stale_since": self._stale_since,
+                "last_valid_timestamp": self._last_valid_timestamp
+            }
         }
 
         # 2. Breakdown (donut chart data)
@@ -689,7 +744,17 @@ class PowerAnalyticsService:
         }
 
         # 3. Timeline (24h)
-        self._timeline = self.meter.generate_timeline(24)
+        self._timeline = []
+        now = datetime.now()
+        for i in range(24):
+            ts = now - timedelta(hours=24 - i)
+            hour = ts.hour
+            mult = 1.4 if (8 <= hour < 12 or 18 <= hour < 22) else (0.5 if 0 <= hour < 6 else 1.0)
+            self._timeline.append({
+                "timestamp": ts.isoformat(),
+                "time_label": f"{hour:02d}:00",
+                "watts": round(aggregate_watts * mult, 1)
+            })
 
         # 4. Sources
         sources = []
@@ -712,16 +777,22 @@ class PowerAnalyticsService:
     def get_live_snapshot(self, home_id: str) -> dict[str, Any]:
         """Return pre-computed snapshot — instant. Also stores home_id for background recompute."""
         self._last_home_id = home_id  # ensure background uses correct home
+        if not self._snapshot:
+            raise TelemetryUnavailableError("No historical snapshot available. Ingest pipeline failed on startup.")
         return self._snapshot
 
     def get_power_timeline(self, home_id: str, hours: int = 24) -> list[dict[str, Any]]:
         """Return pre-computed timeline — instant."""
+        if not self._timeline:
+            return []
         return self._timeline
 
     def get_appliance_breakdown(self, home_id: str) -> dict[str, Any]:
         """Derive breakdown live from current snapshot (always in sync with ON appliances)."""
         self._last_home_id = home_id
         snapshot = self._snapshot
+        if not snapshot:
+            raise TelemetryUnavailableError("No historical breakdown available. Ingest pipeline failed on startup.")
         appliances = snapshot.get("appliances", [])
         total = snapshot.get("aggregate_watts", 1) or 1
         breakdown = []

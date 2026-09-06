@@ -1,0 +1,29 @@
+{
+    "version": "v1.0.0",
+    "training_timestamp": "2026-05-25T11:48:56.597104",
+    "overlap_start": "2013-06-12",
+    "overlap_end": "2013-08-04",
+    "split_date": "2013-07-19",
+    "feature_schema": [
+        "mean",
+        "std",
+        "min",
+        "max",
+        "median",
+        "p10",
+        "p25",
+        "p75",
+        "p90",
+        "range",
+        "iqr",
+        "skew",
+        "kurtosis",
+        "coef_var",
+        "diff_mean",
+        "diff_max",
+        "diff_std",
+        "zero_crossings",
+        "rms"
+    ],
+    "window_size": 60
+}

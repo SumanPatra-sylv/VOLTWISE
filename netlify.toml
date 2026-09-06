@@ -1,5 +1,5 @@
 # ============================================================
-# Netlify build configuration for React SPA
+# Netlify build configuration
 # ============================================================
 
 [build]
@@ -8,6 +8,6 @@
 
 # SPA client-side routing — serve index.html for all routes
 [[redirects]]
-  from = "/*"
-  to = "/index.html"
+  from   = "/*"
+  to     = "/index.html"
   status = 200
