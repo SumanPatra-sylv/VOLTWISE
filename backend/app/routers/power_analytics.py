@@ -16,14 +16,14 @@ router = APIRouter(prefix="/api/power-analytics", tags=["power-analytics"])
 
 
 @router.get("/snapshot")
-async def get_snapshot(home_id: str = Query(..., description="Home ID")):
+def get_snapshot(home_id: str = Query(..., description="Home ID")):
     """Live aggregate + per-appliance power snapshot."""
     svc = get_power_analytics_service()
     return svc.get_live_snapshot(home_id)
 
 
 @router.get("/timeline")
-async def get_timeline(
+def get_timeline(
     home_id: str = Query(..., description="Home ID"),
     hours: int = Query(24, ge=1, le=168, description="Hours of history"),
 ):
@@ -34,14 +34,14 @@ async def get_timeline(
 
 
 @router.get("/breakdown")
-async def get_breakdown(home_id: str = Query(..., description="Home ID")):
+def get_breakdown(home_id: str = Query(..., description="Home ID")):
     """Per-appliance breakdown with percentages (donut chart)."""
     svc = get_power_analytics_service()
     return svc.get_appliance_breakdown(home_id)
 
 
 @router.get("/sources")
-async def get_sources(home_id: str = Query(..., description="Home ID")):
+def get_sources(home_id: str = Query(..., description="Home ID")):
     """Which appliances use smart plug vs NILM."""
     svc = get_power_analytics_service()
     return svc.get_sources(home_id)

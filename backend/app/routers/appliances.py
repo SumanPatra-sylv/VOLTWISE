@@ -378,6 +378,6 @@ async def optimizer_batch_turn_off(
 
 
 @router.get("/health")
-async def health_check():
+def health_check():
     """Basic health check for monitoring."""
     return {"status": "ok", "service": "voltwise-backend", "version": "1.0.0"}

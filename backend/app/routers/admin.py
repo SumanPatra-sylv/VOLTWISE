@@ -36,7 +36,7 @@ IST = timezone(timedelta(hours=5, minutes=30))
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/dashboard")
-async def get_dashboard_stats():
+def get_dashboard_stats():
     """Return all Module 1 KPIs. Uses the RPC function for atomicity."""
     sb = get_supabase()
     try:
@@ -52,7 +52,7 @@ async def get_dashboard_stats():
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/consumers")
-async def get_consumers(
+def get_consumers(
     search: Optional[str] = Query(None, description="Search by name/phone/consumer#"),
     area: Optional[str] = Query(None),
     balance_status: Optional[str] = Query(None, description="critical/low/normal"),
@@ -96,7 +96,7 @@ async def get_consumers(
 
 
 @router.get("/consumers/{user_id}")
-async def get_consumer_profile(user_id: str):
+def get_consumer_profile(user_id: str):
     """Full consumer deep-dive via RPC."""
     sb = get_supabase()
     try:
@@ -112,7 +112,7 @@ async def get_consumer_profile(user_id: str):
 
 
 @router.get("/consumers/{user_id}/risk-score")
-async def get_consumer_risk_score(user_id: str):
+def get_consumer_risk_score(user_id: str):
     """Calculate risk score for a consumer (Module 2 - Risk Detection)."""
     sb = get_supabase()
     flags = []
@@ -232,7 +232,7 @@ async def get_consumer_risk_score(user_id: str):
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/reports/revenue")
-async def get_revenue_report(
+def get_revenue_report(
     period: str = Query("month", description="day/month/year"),
     date: Optional[str] = Query(None, description="Target date (YYYY-MM-DD)"),
 ):
@@ -250,7 +250,7 @@ async def get_revenue_report(
 
 
 @router.get("/reports/balance-health")
-async def get_balance_health():
+def get_balance_health():
     """Balance health report — critical, low, and non-recharging users."""
     sb = get_supabase()
     try:
@@ -284,7 +284,7 @@ async def get_balance_health():
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/reports/meter-health")
-async def get_meter_health():
+def get_meter_health():
     """Meter health via RPC."""
     sb = get_supabase()
     try:
@@ -300,7 +300,7 @@ async def get_meter_health():
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/reports/complaints")
-async def get_complaint_report(
+def get_complaint_report(
     period: str = Query("month", description="week/month/quarter"),
 ):
     """Complaint & SLA analytics via RPC."""
@@ -318,7 +318,7 @@ async def get_complaint_report(
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/reports/consumption")
-async def get_consumption_report():
+def get_consumption_report():
     """Load & consumption analytics from daily_aggregates and meter_readings."""
     sb = get_supabase()
     try:
@@ -380,7 +380,7 @@ async def get_consumption_report():
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/reports/optimization")
-async def get_optimization_report():
+def get_optimization_report():
     """Optimization impact metrics from bills, schedules, recommendations, carbon_stats."""
     sb = get_supabase()
     try:
@@ -428,7 +428,7 @@ async def get_optimization_report():
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/reports/appliances")
-async def get_appliance_report():
+def get_appliance_report():
     """Appliance distribution and usage analytics."""
     sb = get_supabase()
     try:
@@ -481,7 +481,7 @@ async def get_appliance_report():
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/reports/adoption")
-async def get_adoption_report():
+def get_adoption_report():
     """App adoption metrics derived from existing tables."""
     sb = get_supabase()
     try:
@@ -540,7 +540,7 @@ SLA_CONFIG = {
 
 
 @router.get("/complaints")
-async def list_complaints(
+def list_complaints(
     status: Optional[str] = None,
     type: Optional[str] = None,
     priority: Optional[int] = None,
@@ -602,7 +602,7 @@ async def list_complaints(
 
 
 @router.get("/complaints/{complaint_id}")
-async def get_complaint_detail(complaint_id: str):
+def get_complaint_detail(complaint_id: str):
     """Full complaint detail with timeline updates and consumer info."""
     sb = get_supabase()
     try:
@@ -669,7 +669,7 @@ class ComplaintStatusUpdate(BaseModel):
 
 
 @router.patch("/complaints/{complaint_id}/status")
-async def update_complaint_status(complaint_id: str, body: ComplaintStatusUpdate):
+def update_complaint_status(complaint_id: str, body: ComplaintStatusUpdate):
     """Update complaint status, optionally assign, and log to complaint_updates."""
     sb = get_supabase()
     try:
@@ -719,7 +719,7 @@ class ComplaintNoteAdd(BaseModel):
 
 
 @router.post("/complaints/{complaint_id}/notes")
-async def add_complaint_note(complaint_id: str, body: ComplaintNoteAdd):
+def add_complaint_note(complaint_id: str, body: ComplaintNoteAdd):
     """Add an internal note to a complaint timeline without changing status."""
     sb = get_supabase()
     try:
@@ -754,7 +754,7 @@ async def add_complaint_note(complaint_id: str, body: ComplaintNoteAdd):
 # ═══════════════════════════════════════════════════════════════════
 
 @router.post("/consumers/{user_id}/impersonate")
-async def impersonate_consumer(user_id: str):
+def impersonate_consumer(user_id: str):
     """Generate a magic link for admin to login as a consumer.
     Uses Supabase admin API to generate a passwordless link."""
     sb = get_supabase()
@@ -827,7 +827,7 @@ async def impersonate_consumer(user_id: str):
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/audit-logs")
-async def get_audit_logs(
+def get_audit_logs(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -869,7 +869,7 @@ async def get_audit_logs(
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/discoms")
-async def get_discoms():
+def get_discoms():
     """List all DISCOMs with their tariff plans."""
     sb = get_supabase()
     try:
@@ -900,7 +900,7 @@ async def get_discoms():
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/outages")
-async def get_outages(
+def get_outages(
     active_only: bool = Query(True, description="Show only active outages"),
 ):
     """List outage notices."""
@@ -927,7 +927,7 @@ class OutageCreate(BaseModel):
 
 
 @router.post("/outages")
-async def create_outage(body: OutageCreate):
+def create_outage(body: OutageCreate):
     """Create a new outage notice and notify affected consumers."""
     sb = get_supabase()
     try:
@@ -966,7 +966,7 @@ async def create_outage(body: OutageCreate):
 
 
 @router.patch("/outages/{outage_id}/resolve")
-async def resolve_outage(outage_id: str):
+def resolve_outage(outage_id: str):
     """Resolve an outage — sets is_resolved=True and actual_end=now()."""
     sb = get_supabase()
     try:
