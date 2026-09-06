@@ -36,7 +36,7 @@ from scipy import stats
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 # Input: raw aggregate data (for simulation)
-RAW_DATA_DIR = PROJECT_DIR / "data" / "raw" / "iawe"
+RAW_DATA_DIR = PROJECT_DIR / "data" / "electricity"
 
 # Models directory
 MODELS_DIR = PROJECT_DIR / "models" / "edge"
@@ -282,23 +282,28 @@ def main():
     print("Loading Aggregate Data")
     print("-" * 40)
     
-    if args.file:
-        agg_path = Path(args.file)
-    else:
-        agg_path = find_aggregate_file(RAW_DATA_DIR)
+    mains1_path = RAW_DATA_DIR / "1.csv"
+    mains2_path = RAW_DATA_DIR / "2.csv"
     
-    if agg_path is None or not agg_path.exists():
-        print(f"[ERROR] Aggregate file not found!")
-        print("Use --file to specify the aggregate CSV path")
+    if not mains1_path.exists() or not mains2_path.exists():
+        print("[ERROR] Mains files 1.csv or 2.csv not found in RAW_DATA_DIR!")
         return 1
+        
+    mains1 = load_aggregate_csv(mains1_path)
+    mains2 = load_aggregate_csv(mains2_path)
     
-    agg_series = load_aggregate_csv(agg_path)
+    agg_series = mains1.add(mains2, fill_value=0)
+    print(f"  Summed aggregate samples: {len(agg_series)}")
     
     # Resample
     print(f"  Resampling to {RESAMPLE_PERIOD}...")
     agg_resampled = agg_series.resample(RESAMPLE_PERIOD).mean()
     agg_resampled = agg_resampled.dropna()
     print(f"  Resampled samples: {len(agg_resampled)}")
+    
+    # Filter to start after June 12, 2013 where appliances exist
+    agg_resampled = agg_resampled[agg_resampled.index >= "2013-06-12 12:00:00"]
+    print(f"  Filtered samples (after June 12 2013): {len(agg_resampled)}")
     
     # ========================================================================
     # Streaming inference simulation

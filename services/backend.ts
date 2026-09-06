@@ -455,6 +455,7 @@ export async function getPowerSources(homeId: string): Promise<{ sources: PowerS
     return apiFetch(`/power-analytics/sources?home_id=${homeId}`);
 }
 
+<<<<<<< HEAD
 // ── Billing API ───────────────────────────────────────────────────
 
 export interface BillingMonthEntry {
@@ -577,3 +578,122 @@ export async function getBillingEffectiveRates(
         `/billing/effective-rates?home_id=${homeId}`,
     );
 }
+=======
+// ── Smart Plug API ────────────────────────────────────────────────
+
+export interface PlugStatusData {
+    plug_id: string;
+    tuya_device_id: string;
+    is_online: boolean;
+    is_on: boolean;
+    power_w: number;
+    voltage: number;
+    current_ma: number;
+    energy_kwh: number;
+    source: string;
+    last_seen_at: string | null;
+}
+
+export interface PlugReadingsData {
+    plug_id: string;
+    period: string;
+    count: number;
+    readings: Array<{
+        timestamp: string;
+        power_w: number;
+        voltage: number;
+        current_ma: number;
+        energy_kwh: number;
+        is_on: boolean;
+    }>;
+    summary: {
+        avg_power_w: number;
+        max_power_w: number;
+        min_power_w: number;
+        total_energy_kwh: number;
+        reading_count: number;
+        uptime_percent: number;
+    };
+}
+
+export interface PlugSummaryData {
+    id: string;
+    tuya_device_id: string;
+    name: string | null;
+    plug_status: string;
+    device_type: string | null;
+    last_power_w: number | null;
+    last_voltage: number | null;
+    last_seen_at: string | null;
+    linked_appliance: string | null;
+}
+
+export interface RegisterPlugData {
+    plug_id: string;
+    tuya_device_id: string;
+    name: string;
+    status: string;
+    message: string;
+}
+
+/** Register a new smart plug (Wipro 16A / Tuya). */
+export async function registerPlug(params: {
+    home_id: string;
+    tuya_device_id: string;
+    name?: string;
+    local_key?: string;
+    ip_address?: string;
+    device_type?: string;
+}): Promise<RegisterPlugData> {
+    return apiFetch<RegisterPlugData>('/plugs/register', {
+        method: 'POST',
+        body: JSON.stringify(params),
+    });
+}
+
+/** Get live power status from a smart plug. */
+export async function getPlugStatus(plugId: string): Promise<PlugStatusData> {
+    return apiFetch<PlugStatusData>(`/plugs/${plugId}/status`);
+}
+
+/** Get historical readings for a plug. */
+export async function getPlugReadings(
+    plugId: string,
+    period: '1h' | '6h' | '24h' | '7d' | '30d' = '24h',
+): Promise<PlugReadingsData> {
+    return apiFetch<PlugReadingsData>(`/plugs/${plugId}/readings?period=${period}`);
+}
+
+/** Link a smart plug to an appliance. */
+export async function linkPlug(
+    plugId: string,
+    applianceId: string,
+): Promise<{ success: boolean; message: string }> {
+    return apiFetch(`/plugs/${plugId}/link`, {
+        method: 'POST',
+        body: JSON.stringify({ appliance_id: applianceId }),
+    });
+}
+
+/** Turn a smart plug on or off directly. */
+export async function controlPlug(
+    plugId: string,
+    action: 'turn_on' | 'turn_off',
+): Promise<{ success: boolean; action: string; source: string; response_time_ms: number; message: string }> {
+    return apiFetch(`/plugs/${plugId}/control`, {
+        method: 'POST',
+        body: JSON.stringify({ action }),
+    });
+}
+
+/** List all smart plugs for a home. */
+export async function listPlugs(homeId: string): Promise<PlugSummaryData[]> {
+    return apiFetch<PlugSummaryData[]>(`/plugs?home_id=${homeId}`);
+}
+
+/** Unregister a smart plug. */
+export async function unregisterPlug(plugId: string): Promise<{ success: boolean; message: string }> {
+    return apiFetch(`/plugs/${plugId}`, { method: 'DELETE' });
+}
+
+>>>>>>> 79c5f54edac01d3623b65df8fcd602cf694f9d25

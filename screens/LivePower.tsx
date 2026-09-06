@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-    PieChart, Pie, Cell, ResponsiveContainer, AreaChart, Area, XAxis, Tooltip, CartesianGrid,
+    PieChart, Pie, Cell, ResponsiveContainer, AreaChart, Area, XAxis, Tooltip, CartesianGrid, BarChart, Bar,
 } from 'recharts';
 import { ACTIVE_DEVICES_PREVIEW } from '../constants';
 import {
     ChevronRight, Zap, DollarSign, TrendingUp, TrendingDown, Clock,
     Wind, Thermometer, Box, Tv, Loader2, Activity, Plug, Brain,
-    Radio, X, RefreshCw, Info,
+    Radio, X, RefreshCw, Info, ArrowUp, ArrowDown, ChevronLeft,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getDashboardStats, DashboardStats } from '../services/api';
@@ -17,6 +17,12 @@ import {
     getPowerSnapshot, getPowerBreakdown, getPowerTimeline,
     PowerSnapshot, PowerBreakdown, PowerTimelinePoint,
 } from '../services/backend';
+import {
+    calculateHourlyData, calculateDailyData, calculateWeeklyData, calculateMonthlyComparison,
+    ElectricityUsageSummary, HourlyDataPoint, DailyDataPoint, WeeklyDataPoint,
+} from '../utils/analyticsCalculator';
+import { fetchUserTariffSlots } from '../utils/tariffOptimizer';
+import { DBTariffSlot } from '../types/database';
 
 type ViewMode = 'mobile' | 'tablet' | 'web';
 
@@ -60,6 +66,108 @@ const LivePower: React.FC<LivePowerProps> = ({ viewMode = 'mobile' }) => {
 
     // ── Live feed modal state ─────────────────────────────────────
     const [showLiveFeed, setShowLiveFeed] = useState(false);
+
+    // ── Electricity Usage section state ────────────────────────────
+    const [usageTab, setUsageTab] = useState<'daily' | 'weekly' | 'monthly'>('daily');
+    const [hourlyData, setHourlyData] = useState<HourlyDataPoint[]>([]);
+    const [dailyData, setDailyData] = useState<DailyDataPoint[]>([]);
+    const [weeklyData, setWeeklyData] = useState<WeeklyDataPoint[]>([]);
+    const [monthlySummary, setMonthlySummary] = useState<{ thisMonth: ElectricityUsageSummary; lastMonth: ElectricityUsageSummary; changePercent: number } | null>(null);
+    const [currentSummary, setCurrentSummary] = useState<ElectricityUsageSummary | null>(null);
+    const [usageLoading, setUsageLoading] = useState(false);
+    const [tariffSlots, setTariffSlots] = useState<DBTariffSlot[]>([]);
+
+    // ── Analytics Carousel state ──────────────────────────────────
+    const [carouselIndex, setCarouselIndex] = useState(0);
+    const carouselRef = useRef<HTMLDivElement>(null);
+
+    // ── Fetch tariff slots for highlighting ────────────────────────
+    useEffect(() => {
+        if (home?.id) {
+            fetchUserTariffSlots(home.id).then(setTariffSlots).catch(err => {
+                console.error('[LivePower] Failed to fetch tariff slots:', err);
+                setTariffSlots([]);
+            });
+        }
+    }, [home?.id]);
+
+    // ── Load electricity usage data ────────────────────────────────
+    const loadUsageData = useCallback(async () => {
+        if (!home?.id || tariffSlots.length === 0) return;
+        setUsageLoading(true);
+        try {
+            const [hourly, daily, weekly, monthly] = await Promise.all([
+                calculateHourlyData(home.id, tariffSlots),
+                calculateDailyData(home.id, tariffSlots),
+                calculateWeeklyData(home.id, tariffSlots),
+                calculateMonthlyComparison(home.id, tariffSlots),
+            ]);
+
+            setHourlyData(hourly.data);
+            setDailyData(daily.data);
+            setWeeklyData(weekly.data);
+            setMonthlySummary(monthly);
+
+            // Set initial summary based on default tab
+            setCurrentSummary(hourly.summary);
+        } catch (err) {
+            console.error('[LivePower] Failed to load usage data:', err);
+        } finally {
+            setUsageLoading(false);
+        }
+    }, [home?.id, tariffSlots]);
+
+    useEffect(() => {
+        loadUsageData();
+    }, [loadUsageData]);
+
+    // ── Update summary when tab changes ────────────────────────────
+    useEffect(() => {
+        if (usageTab === 'daily' && dailyData.length > 0) {
+            const total = dailyData.reduce((s, d) => s + d.kwh, 0);
+            const cost = dailyData.reduce((s, d) => s + d.cost, 0);
+            const peakTotal = dailyData.reduce((s, d) => s + d.peakKwh, 0);
+            const normalTotal = dailyData.reduce((s, d) => s + d.normalKwh, 0);
+            const offPeakTotal = dailyData.reduce((s, d) => s + d.offPeakKwh, 0);
+            setCurrentSummary({
+                totalKwh: Math.round(total * 100) / 100,
+                totalCost: Math.round(cost * 100) / 100,
+                peakKwh: Math.round(peakTotal * 100) / 100,
+                normalKwh: Math.round(normalTotal * 100) / 100,
+                offPeakKwh: Math.round(offPeakTotal * 100) / 100,
+                averageHourlyKwh: Math.round((total / 7) * 100) / 100,
+                peakHours: '6 PM - 10 PM',
+                offPeakHours: '2 AM - 6 AM',
+            });
+        } else if (usageTab === 'weekly' && weeklyData.length > 0) {
+            const total = weeklyData.reduce((s, w) => s + w.kwh, 0);
+            const cost = weeklyData.reduce((s, w) => s + w.cost, 0);
+            setCurrentSummary({
+                totalKwh: Math.round(total * 100) / 100,
+                totalCost: Math.round(cost * 100) / 100,
+                peakKwh: 0,
+                normalKwh: 0,
+                offPeakKwh: 0,
+                averageHourlyKwh: Math.round((total / (4 * 24)) * 100) / 100,
+                peakHours: '6 PM - 10 PM',
+                offPeakHours: '2 AM - 6 AM',
+            });
+        } else if (usageTab === 'monthly' && monthlySummary) {
+            setCurrentSummary(monthlySummary.thisMonth);
+        }
+    }, [usageTab, hourlyData, dailyData, weeklyData, monthlySummary]);
+
+    // ── Carousel navigation ────────────────────────────────────────
+    const carouselCharts = ['Daily', 'Weekly', 'Monthly'];
+    const handleCarouselPrev = () => {
+        setCarouselIndex((prev) => (prev - 1 + carouselCharts.length) % carouselCharts.length);
+    };
+    const handleCarouselNext = () => {
+        setCarouselIndex((prev) => (prev + 1) % carouselCharts.length);
+    };
+    const handleDotClick = (index: number) => {
+        setCarouselIndex(index);
+    };
 
     // ── Fetch original insights data (once, no polling) ───────────
     const fetchInsightsData = useCallback(async () => {
@@ -185,7 +293,7 @@ const LivePower: React.FC<LivePowerProps> = ({ viewMode = 'mobile' }) => {
                     </div>
                 </div>
 
-                {/* ── Consumption Donut Chart ───────────────────────── */}
+                {/* ── Consumption Donut Chart ───────────────────── */}
                 {donutData.length > 0 && (
                     <div className="bg-white rounded-[2rem] shadow-soft border border-slate-100 p-6 mb-6 relative overflow-hidden">
                         <div className="flex justify-between items-start mb-6">
@@ -232,6 +340,206 @@ const LivePower: React.FC<LivePowerProps> = ({ viewMode = 'mobile' }) => {
                         </div>
                     </div>
                 )}
+
+                {/* ── Electricity Usage Section ────────────────────── */}
+                <div className="bg-white rounded-[2rem] shadow-soft border border-slate-100 p-6 mb-6">
+                    <div className="flex items-center justify-between mb-6">
+                        <div>
+                            <h3 className="text-lg font-bold text-slate-800">Electricity Usage</h3>
+                            <p className="text-xs text-slate-400 font-medium">Real-time consumption analytics</p>
+                        </div>
+                    </div>
+
+                    {/* Carousel Header with Navigation */}
+                    <div className="flex items-center justify-between mb-6">
+                        <button
+                            onClick={handleCarouselPrev}
+                            className="p-2 hover:bg-slate-100 rounded-lg transition-all"
+                        >
+                            <ChevronLeft className="w-5 h-5 text-slate-600" />
+                        </button>
+                        
+                        <div className="flex gap-2">
+                            {carouselCharts.map((_, idx) => (
+                                <button
+                                    key={idx}
+                                    onClick={() => handleDotClick(idx)}
+                                    className={`px-4 py-2 rounded-full font-semibold text-sm whitespace-nowrap transition-all ${
+                                        carouselIndex === idx
+                                            ? 'bg-cyan-500 text-white shadow-md'
+                                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                    }`}
+                                >
+                                    {carouselCharts[idx]}
+                                </button>
+                            ))}
+                        </div>
+
+                        <button
+                            onClick={handleCarouselNext}
+                            className="p-2 hover:bg-slate-100 rounded-lg transition-all"
+                        >
+                            <ChevronRight className="w-5 h-5 text-slate-600" />
+                        </button>
+                    </div>
+
+                    {usageLoading ? (
+                        <div className="flex items-center justify-center py-20">
+                            <Loader2 className="w-6 h-6 text-cyan-500 animate-spin" />
+                        </div>
+                    ) : (
+                        <>
+                            {/* Summary Cards */}
+                            {currentSummary && (
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                                    <div className="bg-gradient-to-br from-cyan-50 to-cyan-100/50 rounded-xl p-3 border border-cyan-100">
+                                        <div className="text-xs text-cyan-700 font-medium mb-1">Total kWh</div>
+                                        <div className="text-2xl font-bold text-cyan-900">{currentSummary.totalKwh}</div>
+                                        <div className="text-[10px] text-cyan-600 mt-1">₹ {currentSummary.totalCost}</div>
+                                    </div>
+
+                                    <div className="bg-gradient-to-br from-rose-50 to-rose-100/50 rounded-xl p-3 border border-rose-100">
+                                        <div className="text-xs text-rose-700 font-medium mb-1">Peak Hours</div>
+                                        <div className="text-sm font-bold text-rose-900">{currentSummary.peakKwh} kWh</div>
+                                        <div className="text-[10px] text-rose-600 mt-1">{currentSummary.peakHours}</div>
+                                    </div>
+
+                                    <div className="bg-gradient-to-br from-amber-50 to-amber-100/50 rounded-xl p-3 border border-amber-100">
+                                        <div className="text-xs text-amber-700 font-medium mb-1">Normal Hours</div>
+                                        <div className="text-2xl font-bold text-amber-900">{currentSummary.normalKwh}</div>
+                                        <div className="text-[10px] text-amber-600 mt-1">kWh</div>
+                                    </div>
+
+                                    <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 rounded-xl p-3 border border-emerald-100">
+                                        <div className="text-xs text-emerald-700 font-medium mb-1">Off-Peak</div>
+                                        <div className="text-2xl font-bold text-emerald-900">{currentSummary.offPeakKwh}</div>
+                                        <div className="text-[10px] text-emerald-600 mt-1">{currentSummary.offPeakHours}</div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Carousel Container */}
+                            <div ref={carouselRef} className="relative overflow-hidden">
+                                <motion.div
+                                    initial={{ opacity: 0, x: 100 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    exit={{ opacity: 0, x: -100 }}
+                                    transition={{ duration: 0.3 }}
+                                    key={carouselIndex}
+                                >
+                                    {/* Chart - Daily */}
+                                    {carouselIndex === 0 && hourlyData.length > 0 && (
+                                        <div>
+                                            <h4 className="font-semibold text-slate-800 mb-4 text-sm">Hourly Breakdown (Today)</h4>
+                                            <div className="h-64 mb-4">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <AreaChart data={hourlyData}>
+                                                        <defs>
+                                                            <linearGradient id="dailyGradient" x1="0" y1="0" x2="0" y2="1">
+                                                                <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.3} />
+                                                                <stop offset="95%" stopColor="#06b6d4" stopOpacity={0} />
+                                                            </linearGradient>
+                                                        </defs>
+                                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                                        <XAxis dataKey="hour" stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} interval={2} />
+                                                        <Tooltip
+                                                            contentStyle={{ backgroundColor: '#fff', borderColor: '#e2e8f0', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}
+                                                            formatter={(value: any) => {
+                                                                if (typeof value === 'number') return [value.toFixed(2) + ' kWh'];
+                                                                return value;
+                                                            }}
+                                                            labelFormatter={(label) => `Hour: ${label}`}
+                                                        />
+                                                        <Area type="monotone" dataKey="kwh" stroke="#06b6d4" strokeWidth={2} fillOpacity={1} fill="url(#dailyGradient)" />
+                                                    </AreaChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Chart - Weekly */}
+                                    {carouselIndex === 1 && dailyData.length > 0 && (
+                                        <div>
+                                            <h4 className="font-semibold text-slate-800 mb-4 text-sm">Weekly Trend (Last 7 Days)</h4>
+                                            <div className="h-64">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <AreaChart data={dailyData}>
+                                                        <defs>
+                                                            <linearGradient id="weeklyGradient" x1="0" y1="0" x2="0" y2="1">
+                                                                <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.3} />
+                                                                <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0} />
+                                                            </linearGradient>
+                                                        </defs>
+                                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                                        <XAxis dataKey="date" stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} />
+                                                        <Tooltip
+                                                            contentStyle={{ backgroundColor: '#fff', borderColor: '#e2e8f0', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}
+                                                            formatter={(value: any) => [value.toFixed(2) + ' kWh']}
+                                                        />
+                                                        <Area type="monotone" dataKey="kwh" stroke="#0ea5e9" strokeWidth={2} fillOpacity={1} fill="url(#weeklyGradient)" />
+                                                    </AreaChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Chart - Monthly */}
+                                    {carouselIndex === 2 && monthlySummary && (
+                                        <div>
+                                            <h4 className="font-semibold text-slate-800 mb-4 text-sm">Month Comparison</h4>
+                                            <div className="grid grid-cols-2 gap-4 mb-4">
+                                                {/* This Month */}
+                                                <div className="bg-gradient-to-br from-blue-50 to-cyan-50 border border-cyan-200 rounded-xl p-4">
+                                                    <div className="flex items-center justify-between mb-2">
+                                                        <p className="text-xs font-bold text-cyan-900 uppercase">This Month</p>
+                                                        <div className="flex items-center gap-1 text-emerald-600 text-sm font-bold">
+                                                            {monthlySummary.changePercent >= 0 ? (
+                                                                <>
+                                                                    <ArrowUp className="w-4 h-4" />
+                                                                    {monthlySummary.changePercent}%
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <ArrowDown className="w-4 h-4" />
+                                                                    {Math.abs(monthlySummary.changePercent)}%
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-3xl font-bold text-cyan-900 mb-1">{monthlySummary.thisMonth.totalKwh}</div>
+                                                    <div className="text-sm text-cyan-700 font-semibold">₹ {monthlySummary.thisMonth.totalCost}</div>
+                                                </div>
+
+                                                {/* Last Month */}
+                                                <div className="bg-gradient-to-br from-slate-50 to-slate-100 border border-slate-300 rounded-xl p-4">
+                                                    <p className="text-xs font-bold text-slate-700 uppercase mb-2">Last Month</p>
+                                                    <div className="text-3xl font-bold text-slate-700 mb-1">{monthlySummary.lastMonth.totalKwh}</div>
+                                                    <div className="text-sm text-slate-600 font-semibold">₹ {monthlySummary.lastMonth.totalCost}</div>
+                                                </div>
+                                            </div>
+                                            <div className="h-64">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <BarChart data={[
+                                                        { name: 'This Month', kwh: monthlySummary.thisMonth.totalKwh, cost: monthlySummary.thisMonth.totalCost },
+                                                        { name: 'Last Month', kwh: monthlySummary.lastMonth.totalKwh, cost: monthlySummary.lastMonth.totalCost },
+                                                    ]}>
+                                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                                        <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} />
+                                                        <Tooltip
+                                                            contentStyle={{ backgroundColor: '#fff', borderColor: '#e2e8f0', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}
+                                                            formatter={(value: any) => value.toFixed(2)}
+                                                        />
+                                                        <Bar dataKey="kwh" fill="#0ea5e9" radius={[8, 8, 0, 0]} />
+                                                    </BarChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+                                    )}
+                                </motion.div>
+                            </div>
+                        </>
+                    )}
+                </div>
 
                 {/* ── Daily Trends Chart ───────────────────────────── */}
                 {trendData.length > 0 && (

@@ -12,12 +12,15 @@ export interface Appliance {
   name: string;
   icon: string;
   status: ApplianceStatus;
-  power: number; // in Watts
+  power: number; // in Watts (rated)
   costPerHour: number;
   runtime?: string;
   scheduleTime?: string;
   message?: string;
   savingPotential?: number;
+  smart_plug_id?: string | null;
+  current_power_w?: number;
+  source?: 'manual' | 'smart_plug' | 'nilm';
 }
 
 export interface Achievement {

@@ -9,8 +9,8 @@ Endpoints:
 """
 
 from __future__ import annotations
-from fastapi import APIRouter, Query
-from app.services.nilm_service import get_power_analytics_service
+from fastapi import APIRouter, Query, HTTPException
+from app.services.nilm_service import get_power_analytics_service, TelemetryUnavailableError
 
 router = APIRouter(prefix="/api/power-analytics", tags=["power-analytics"])
 
@@ -19,7 +19,10 @@ router = APIRouter(prefix="/api/power-analytics", tags=["power-analytics"])
 def get_snapshot(home_id: str = Query(..., description="Home ID")):
     """Live aggregate + per-appliance power snapshot."""
     svc = get_power_analytics_service()
-    return svc.get_live_snapshot(home_id)
+    try:
+        return svc.get_live_snapshot(home_id)
+    except TelemetryUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @router.get("/timeline")
@@ -37,11 +40,44 @@ def get_timeline(
 def get_breakdown(home_id: str = Query(..., description="Home ID")):
     """Per-appliance breakdown with percentages (donut chart)."""
     svc = get_power_analytics_service()
-    return svc.get_appliance_breakdown(home_id)
+    try:
+        return svc.get_appliance_breakdown(home_id)
+    except TelemetryUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @router.get("/sources")
 def get_sources(home_id: str = Query(..., description="Home ID")):
     """Which appliances use smart plug vs NILM."""
     svc = get_power_analytics_service()
-    return svc.get_sources(home_id)
+    snapshot = svc.get_live_snapshot(home_id)
+    
+    supported_nilm = {"ac", "fridge"}
+    experimental_nilm = {"television", "washing_machine"}
+    
+    sources = []
+    for a in snapshot.get("appliances", []):
+        appliance_key = a["appliance"]
+        if appliance_key == "standby_others":
+            continue
+            
+        real_source = a["source"]
+        accuracy = "exact (±1W)" if real_source == "smart_plug" else "model-estimated"
+        
+        status = "supported"
+        if appliance_key in experimental_nilm:
+            status = "experimental"
+            
+        sources.append({
+            "appliance": appliance_key,
+            "label": a["label"],
+            "category": a["category"],
+            "source": real_source,
+            "accuracy": accuracy,
+            "status": status,
+        })
+        
+    return {
+        "sources": sources,
+        "model_info": svc.nilm.model_info,
+    }

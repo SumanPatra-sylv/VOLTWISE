@@ -19,7 +19,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import joblib
+import json
 from sklearn.model_selection import train_test_split
+
+# Configurable Split Boundaries
+OVERLAP_START = "2013-06-12"
+OVERLAP_END = "2013-08-04"
+SPLIT_DATE = "2013-07-19"
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     mean_absolute_error, mean_squared_error, r2_score
@@ -109,6 +115,11 @@ def main():
     
     df_features = pd.read_csv(FEATURES_FILE)
     df_labels = pd.read_csv(LABELS_FILE)
+
+    # Filter to overlap range where all 4 appliances have real data
+    overlap_mask = (df_features["window_start"] >= OVERLAP_START) & (df_features["window_start"] <= OVERLAP_END)
+    df_features = df_features[overlap_mask].reset_index(drop=True)
+    df_labels = df_labels[overlap_mask].reset_index(drop=True)
     
     print(f"  Features: {df_features.shape}")
     print(f"  Labels: {df_labels.shape}")
@@ -165,10 +176,13 @@ def main():
             print(f"  [WARN] Only one class present, skipping classifier training")
             continue
         
-        # Split data
-        X_train, X_test, y_clf_train, y_clf_test, y_reg_train, y_reg_test = train_test_split(
-            X, y_clf, y_reg, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y_clf
-        )
+        # Perform temporal train/test split with zero leakage
+        train_mask = df_features["window_end"] < SPLIT_DATE
+        test_mask = df_features["window_start"] >= SPLIT_DATE
+
+        X_train, X_test = X[train_mask], X[test_mask]
+        y_clf_train, y_clf_test = y_clf[train_mask], y_clf[test_mask]
+        y_reg_train, y_reg_test = y_reg[train_mask], y_reg[test_mask]
         
         print(f"  Train samples: {len(X_train)}")
         print(f"  Test samples: {len(X_test)}")
@@ -240,6 +254,21 @@ def main():
     feature_cols_path = MODELS_DIR / "feature_columns.joblib"
     joblib.dump(feature_cols, feature_cols_path)
     print(f"\n  Feature columns saved: {feature_cols_path}")
+
+    # Save training metadata
+    metadata = {
+        "version": "v1.0.0",
+        "training_timestamp": pd.Timestamp.now().isoformat(),
+        "overlap_start": OVERLAP_START,
+        "overlap_end": OVERLAP_END,
+        "split_date": SPLIT_DATE,
+        "feature_schema": feature_cols,
+        "window_size": 60
+    }
+    metadata_path = MODELS_DIR / "model_metadata.json"
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=4)
+    print(f"  Model metadata saved: {metadata_path}")
     
     # ========================================================================
     # Summary

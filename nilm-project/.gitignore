@@ -66,6 +66,7 @@ data/h5/
 *.tar.gz
 *.tar.bz2
 *.zip
+*.npy
 
 # Keep processed directory structure but not large files
 !data/processed/.gitkeep

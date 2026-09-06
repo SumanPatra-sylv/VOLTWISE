@@ -26,8 +26,10 @@ from app.routers.power_analytics import router as power_analytics_router
 from app.routers.admin_chat import router as admin_chat_router
 from app.routers.admin import router as admin_router
 from app.routers.billing import router as billing_router
+from app.routers.plugs import router as plugs_router
 from app.services.scheduler_manager import set_scheduler, restore_active_schedules
 from app.services.transition_watcher import tariff_transition_watcher
+from app.services.plug_poller import poll_all_plugs
 
 # ── Logging ─────────────────────────────────────────────────────────
 
@@ -55,20 +57,18 @@ scheduler = AsyncIOScheduler(
 
 def _verify_db_access():
     """Fail-fast check: confirm the service_role has table-level GRANTs."""
-    from app.database import get_supabase
-    db = get_supabase()
     try:
+        from app.database import get_supabase
+        db = get_supabase()
         # Simple SELECT on a core table — if this fails, the backend cannot operate
         db.table("appliances").select("id").limit(1).execute()
         logger.info("DB connectivity check PASSED (service_role has table access)")
     except Exception as exc:
-        logger.critical(
-            "DB connectivity check FAILED: %s\n"
-            "→ Run sql/10_grant_service_role.sql in Supabase SQL Editor to fix.\n"
-            "  The service_role needs GRANT ALL ON ALL TABLES IN SCHEMA public.",
+        logger.warning(
+            "DB connectivity check FAILED or SKIPPED: %s\n"
+            "→ Proceeding in offline/demo mode.",
             exc,
         )
-        raise SystemExit(1)
 
 
 @asynccontextmanager
@@ -90,6 +90,15 @@ async def lifespan(app: FastAPI):
         id="transition_watcher",
         replace_existing=True,
         name="Tariff & Carbon Transition Watcher",
+    )
+
+    # Add smart plug poller (every 10 seconds)
+    scheduler.add_job(
+        poll_all_plugs,
+        trigger=IntervalTrigger(seconds=10),
+        id="plug_poller",
+        replace_existing=True,
+        name="Smart Plug Power Poller",
     )
 
     # Start scheduler
@@ -142,6 +151,7 @@ app.include_router(power_analytics_router)
 app.include_router(admin_chat_router)
 app.include_router(admin_router)
 app.include_router(billing_router)
+app.include_router(plugs_router)
 
 
 # ── Root ────────────────────────────────────────────────────────────

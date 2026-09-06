@@ -1,0 +1,11 @@
+{
+    "dataset_source": "iAWE mains1 + mains2 summed",
+    "window_size": 60,
+    "sampling_interval_seconds": 5,
+    "split_dates": {
+        "split_date": "2013-07-19",
+        "overlap_end": "2013-08-04"
+    },
+    "window_count": 8993,
+    "export_timestamp": "2026-05-25T06:18:14.847930"
+}
