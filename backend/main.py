@@ -23,8 +23,10 @@ from app.config import get_settings
 from app.routers.appliances import router as appliances_router
 from app.routers.autopilot import router as autopilot_router
 from app.routers.power_analytics import router as power_analytics_router
+from app.routers.plugs import router as plugs_router
 from app.services.scheduler_manager import set_scheduler, restore_active_schedules
 from app.services.transition_watcher import tariff_transition_watcher
+from app.services.plug_poller import poll_all_plugs
 
 # ── Logging ─────────────────────────────────────────────────────────
 
@@ -89,6 +91,15 @@ async def lifespan(app: FastAPI):
         name="Tariff & Carbon Transition Watcher",
     )
 
+    # Add smart plug poller (every 10 seconds)
+    scheduler.add_job(
+        poll_all_plugs,
+        trigger=IntervalTrigger(seconds=10),
+        id="plug_poller",
+        replace_existing=True,
+        name="Smart Plug Power Poller",
+    )
+
     # Start scheduler
     scheduler.start()
     logger.info(f"APScheduler started with {len(scheduler.get_jobs())} jobs")
@@ -136,6 +147,7 @@ app.add_middleware(
 app.include_router(appliances_router)
 app.include_router(autopilot_router)
 app.include_router(power_analytics_router)
+app.include_router(plugs_router)
 
 
 # ── Root ────────────────────────────────────────────────────────────

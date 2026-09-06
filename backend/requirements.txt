@@ -8,3 +8,4 @@ python-dotenv>=1.0.1
 pydantic>=2.9.0
 pydantic-settings>=2.5.0
 tinytuya>=1.15.0
+tuya-connector-python>=0.1.2

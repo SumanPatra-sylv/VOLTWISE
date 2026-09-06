@@ -353,13 +353,18 @@ class NilmDisaggregator:
 class SmartPlugReader:
     """
     Reads power data from smart plugs.
-    Currently returns synthetic data for demo.
-    Later: integrates with Tuya adapter in backend/app/adapters/device.py
+    Checks real plug_readings from DB when available.
+    Falls back to synthetic data for demo mode when no DB or no readings.
     """
 
     def __init__(self):
-        # In production, this would come from Supabase (appliances table has_smart_plug flag)
+        # Registered smart plug appliances (demo registry)
         self._smart_plug_appliances: dict[str, dict] = {}
+        self._db = None
+
+    def set_db(self, db_client):
+        """Set the Supabase client for reading real plug data."""
+        self._db = db_client
 
     def register_smart_plug(self, appliance_key: str, device_id: str = ""):
         """Register an appliance as having a smart plug."""
@@ -371,15 +376,74 @@ class SmartPlugReader:
     def has_smart_plug(self, appliance_key: str) -> bool:
         return appliance_key in self._smart_plug_appliances
 
+    def _read_real_plug_data(self, appliance_key: str) -> dict[str, Any] | None:
+        """
+        Try to read real power data from the plug_readings table.
+        Looks for the most recent reading for any appliance matching this category.
+        """
+        if not self._db:
+            return None
+
+        profile = APPLIANCE_PROFILES.get(appliance_key)
+        if not profile:
+            return None
+
+        try:
+            # Find appliances with a smart_plug_id matching this category
+            result = self._db.table("appliances").select(
+                "id, name, category, smart_plug_id, current_power_w, status"
+            ).eq("category", profile["category"]).not_.is_(
+                "smart_plug_id", "null"
+            ).limit(1).execute()
+
+            if not result.data:
+                return None
+
+            appliance = result.data[0]
+            plug_id = appliance["smart_plug_id"]
+
+            # Get the latest plug_reading
+            reading = self._db.table("plug_readings").select(
+                "power_w, voltage, current_ma, energy_kwh, is_on, timestamp"
+            ).eq("plug_id", plug_id).order(
+                "timestamp", desc=True
+            ).limit(1).execute()
+
+            if not reading.data:
+                return None
+
+            r = reading.data[0]
+            power_w = float(r.get("power_w", 0) or 0)
+            is_on = bool(r.get("is_on", False))
+
+            return {
+                "appliance": appliance_key,
+                "label": appliance.get("name", profile["label"]),
+                "category": profile["category"],
+                "is_on": is_on,
+                "estimated_watts": round(power_w, 1),
+                "confidence": 1.0,  # Exact measurement from hardware
+                "source": "smart_plug",
+            }
+
+        except Exception as e:
+            logger.warning(f"[SmartPlugReader] Failed to read real data for {appliance_key}: {e}")
+            return None
+
     def read_power(self, appliance_key: str) -> dict[str, Any] | None:
         """
         Read exact power from smart plug.
-        Demo: returns synthetic exact reading.
-        Production: call Tuya API via adapter.
+        Priority: Real DB data → Synthetic demo data.
         """
         if appliance_key not in self._smart_plug_appliances:
             return None
 
+        # Try real data first
+        real_data = self._read_real_plug_data(appliance_key)
+        if real_data is not None:
+            return real_data
+
+        # Fallback: synthetic demo data
         profile = APPLIANCE_PROFILES.get(appliance_key)
         if not profile:
             return None
@@ -397,7 +461,7 @@ class SmartPlugReader:
                 "category": profile["category"],
                 "is_on": True,
                 "estimated_watts": watts,
-                "confidence": 1.0,  # Exact measurement
+                "confidence": 1.0,
                 "source": "smart_plug",
             }
         else:
@@ -458,7 +522,8 @@ class PowerAnalyticsService:
             s = get_settings()
             if create_client and s.supabase_url and s.supabase_service_role_key:
                 self._supabase = create_client(s.supabase_url, s.supabase_service_role_key)
-                logger.info("NILM: Supabase client initialized")
+                self.smart_plug.set_db(self._supabase)
+                logger.info("NILM: Supabase client initialized (smart plug reader wired)")
         except Exception as e:
             logger.warning("NILM: Supabase not available (%s) — using synthetic profiles", e)
         # Compute initial data

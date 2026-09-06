@@ -267,9 +267,25 @@ const ApplianceCard: React.FC<Props> = ({ data, compact = false, onToggle }) => 
                                     className="flex flex-col"
                                 >
                                     <div className={`flex items-center gap-1 ${compact ? 'mb-0' : 'mb-1'}`}>
-                                        <span className={`font-semibold ${isWarning ? 'text-rose-500' : 'text-cyan-600'} ${compact ? 'text-[10px]' : 'text-xs'}`}>
-                                            Running
-                                        </span>
+                                        {/* Show live wattage if smart plug data available */}
+                                        {data.smart_plug_id && data.current_power_w > 0 ? (
+                                            <div className="flex items-center gap-1">
+                                                <span className={`font-bold ${isWarning ? 'text-rose-500' : 'text-cyan-600'} ${compact ? 'text-[10px]' : 'text-xs'}`}>
+                                                    {data.current_power_w >= 1000
+                                                        ? `${(data.current_power_w / 1000).toFixed(1)}kW`
+                                                        : `${Math.round(data.current_power_w)}W`
+                                                    }
+                                                </span>
+                                                <span className={`flex items-center gap-0.5 font-bold text-emerald-500 ${compact ? 'text-[8px]' : 'text-[10px]'}`}>
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block" />
+                                                    LIVE
+                                                </span>
+                                            </div>
+                                        ) : (
+                                            <span className={`font-semibold ${isWarning ? 'text-rose-500' : 'text-cyan-600'} ${compact ? 'text-[10px]' : 'text-xs'}`}>
+                                                Running
+                                            </span>
+                                        )}
                                     </div>
                                     {isWarning && !compact && (
                                         <div className="flex items-center gap-1 text-[10px] font-bold text-rose-500 bg-rose-100/50 px-2 py-1 rounded-lg self-start">
