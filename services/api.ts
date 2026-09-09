@@ -335,6 +335,34 @@ export async function getCarbonDashboard(homeId: string): Promise<CarbonDashboar
 
         // ── Optimization comparison using REAL carbon intensities ──
         // Calculate kWh shifted from control_logs (optimizer/autopilot actions)
+        // Only count actions that occurred during PEAK hours (valid savings)
+
+        // Fetch tariff slots to determine peak hours
+        let peakStartHour = 18, peakEndHour = 22; // defaults
+        try {
+            const { data: slotsData } = await supabase
+                .from('tariff_slots')
+                .select('start_hour, end_hour, slot_type')
+                .eq('plan_id', tariffPlanId ?? '')
+                .eq('slot_type', 'peak');
+            if (slotsData && slotsData.length > 0) {
+                peakStartHour = slotsData[0].start_hour;
+                peakEndHour = slotsData[0].end_hour;
+            }
+        } catch { /* use defaults */ }
+
+        /** Check if a UTC timestamp falls within peak hours (IST) */
+        const isActionDuringPeak = (isoTimestamp: string): boolean => {
+            const actionDate = new Date(isoTimestamp);
+            // Convert to IST (UTC+5:30)
+            const istHour = (actionDate.getUTCHours() + 5 + Math.floor((actionDate.getUTCMinutes() + 30) / 60)) % 24;
+            // Handle midnight-crossing peak slots
+            if (peakStartHour < peakEndHour) {
+                return istHour >= peakStartHour && istHour < peakEndHour;
+            }
+            return istHour >= peakStartHour || istHour < peakEndHour;
+        };
+
         const { data: shiftLogs } = await supabase
             .from('control_logs')
             .select('appliance_id, action, created_at, appliances(rated_power_w)')
@@ -342,29 +370,33 @@ export async function getCarbonDashboard(homeId: string): Promise<CarbonDashboar
             .gte('created_at', firstOfMonthStr)
             .order('created_at', { ascending: true });
 
-        // Estimate kWh shifted: each turn_off during peak saves ~2hr of runtime at rated power
+        // Only count turn_off actions that happened during peak hours
         let kwhShifted = 0;
         if (shiftLogs && shiftLogs.length > 0) {
-            kwhShifted = shiftLogs.reduce((sum, log) => {
-                const wattage = (log.appliances as any)?.rated_power_w || 1000;
-                return sum + (wattage / 1000) * 2; // ~2 hours per shift action
-            }, 0);
+            kwhShifted = shiftLogs
+                .filter(log => isActionDuringPeak(log.created_at))
+                .reduce((sum, log) => {
+                    const wattage = (log.appliances as any)?.rated_power_w || 1000;
+                    return sum + (wattage / 1000) * 2; // ~2 hours per shift action
+                }, 0);
             kwhShifted = Math.round(kwhShifted * 10) / 10;
         }
 
-        // Also account for autopilot-triggered shifts
+        // Also account for autopilot-triggered shifts (only during peak/high-penalty)
         const { data: autopilotLogs } = await supabase
             .from('control_logs')
-            .select('appliance_id, action, appliances(rated_power_w)')
-            .in('trigger_source', ['autopilot', 'scheduler'])
+            .select('appliance_id, action, created_at, appliances(rated_power_w)')
+            .in('trigger_source', ['autopilot', 'autopilot_peak_tariff', 'autopilot_penalty_threshold', 'scheduler'])
             .eq('action', 'turn_off')
             .gte('created_at', firstOfMonthStr);
 
         if (autopilotLogs && autopilotLogs.length > 0) {
-            const autopilotKwh = autopilotLogs.reduce((sum, log) => {
-                const wattage = (log.appliances as any)?.rated_power_w || 1000;
-                return sum + (wattage / 1000) * 1.5; // ~1.5 hours per autopilot action
-            }, 0);
+            const autopilotKwh = autopilotLogs
+                .filter(log => isActionDuringPeak(log.created_at))
+                .reduce((sum, log) => {
+                    const wattage = (log.appliances as any)?.rated_power_w || 1000;
+                    return sum + (wattage / 1000) * 1.5; // ~1.5 hours per autopilot action
+                }, 0);
             kwhShifted += Math.round(autopilotKwh * 10) / 10;
         }
 
@@ -442,31 +474,225 @@ export async function getTariffRates() {
 }
 
 // ── Appliance Control ──────────────────────────────────────────────
+// DEPRECATED: These mock stubs are unused. Real implementations live in backend.ts
+// and Notifications.tsx (direct Supabase calls). Kept for reference only.
 
+/** @deprecated Use toggleAppliance from backend.ts instead */
 export async function toggleAppliance(applianceId: string, state: boolean) {
-    console.log(`[Mock] Toggle appliance ${applianceId} to ${state ? 'ON' : 'OFF'}`);
+    console.warn(`[DEPRECATED] api.toggleAppliance is a mock stub. Use backend.ts toggleAppliance instead.`);
     return { success: true };
 }
 
+/** @deprecated Use ScheduleModal + backend.ts instead */
 export async function scheduleAppliance(applianceId: string, time: string) {
-    console.log(`[Mock] Schedule appliance ${applianceId} at ${time}`);
+    console.warn(`[DEPRECATED] api.scheduleAppliance is a mock stub.`);
     return { success: true };
 }
 
 // ── Notifications ──────────────────────────────────────────────────
+// DEPRECATED: Notifications.tsx now reads directly from Supabase.
 
+/** @deprecated Notifications.tsx fetches from Supabase directly */
 export async function getNotifications() {
+    console.warn(`[DEPRECATED] api.getNotifications is a mock stub.`);
     return [];
 }
 
+/** @deprecated Notifications.tsx marks read via Supabase directly */
 export async function markNotificationRead(notificationId: number) {
-    console.log(`[Mock] Mark notification ${notificationId} as read`);
+    console.warn(`[DEPRECATED] api.markNotificationRead is a mock stub.`);
     return { success: true };
 }
 
 // ── Bills ──────────────────────────────────────────────────────────
+// DEPRECATED: BillHistory.tsx reads from Supabase directly.
 
+/** @deprecated BillHistory reads from Supabase directly */
 export async function getBillHistory(year: number) {
-    console.log(`[Mock] Get bills for year ${year}`);
+    console.warn(`[DEPRECATED] api.getBillHistory is a mock stub.`);
     return [];
+}
+
+// ── Peak Tariff Smart Notification ─────────────────────────────────
+
+export interface PeakSavingsAlert {
+    appliances: { id: string; name: string; ratedPowerW: number; category: string }[];
+    savingsPerHour: number;
+    totalPotentialSavings: number;
+    peakRate: number;
+    offPeakRate: number;
+    peakDurationHours: number;
+}
+
+/**
+ * Check if high-wattage appliances (not managed by autopilot) are running
+ * during peak tariff. Returns null if not peak or no unmanaged heavy appliances.
+ *
+ * Usage: Call from Home.tsx on interval to show a banner/notification.
+ */
+export async function checkPeakSavingsAlert(homeId: string): Promise<PeakSavingsAlert | null> {
+    if (!homeId) return null;
+
+    try {
+        // 1. Get tariff slots
+        const { data: homeData } = await supabase
+            .from('homes')
+            .select('tariff_plan_id, autopilot_enabled')
+            .eq('id', homeId)
+            .single();
+
+        if (!homeData?.tariff_plan_id) return null;
+
+        const { data: slots } = await supabase
+            .from('tariff_slots')
+            .select('*')
+            .eq('plan_id', homeData.tariff_plan_id);
+
+        if (!slots || slots.length === 0) return null;
+
+        // 2. Determine current IST hour and slot
+        const now = new Date();
+        const istOffset = 5.5 * 60 * 60 * 1000;
+        const istHour = new Date(now.getTime() + istOffset).getUTCHours();
+
+        let currentSlot = null;
+        for (const s of slots) {
+            if (s.start_hour < s.end_hour) {
+                if (istHour >= s.start_hour && istHour < s.end_hour) { currentSlot = s; break; }
+            } else {
+                if (istHour >= s.start_hour || istHour < s.end_hour) { currentSlot = s; break; }
+            }
+        }
+
+        if (!currentSlot || currentSlot.slot_type !== 'peak') return null;
+
+        const peakRate = currentSlot.rate;
+        const offPeakRate = Math.min(...slots.map((s: any) => s.rate));
+        const rateDiff = peakRate - offPeakRate;
+        if (rateDiff <= 0) return null;
+
+        // 3. Get IDs of appliances delegated to autopilot
+        const delegatedIds = new Set<string>();
+        if (homeData.autopilot_enabled) {
+            const { data: configs } = await supabase
+                .from('device_autopilot_config')
+                .select('appliance_id')
+                .eq('home_id', homeId)
+                .eq('is_delegated', true);
+            (configs || []).forEach((c: any) => delegatedIds.add(c.appliance_id));
+        }
+
+        // 4. Get ON appliances not managed by autopilot, with high wattage
+        const { data: appData } = await supabase
+            .from('appliances')
+            .select('id, name, rated_power_w, category, optimization_tier, status')
+            .eq('home_id', homeId)
+            .eq('is_active', true)
+            .in('status', ['ON', 'WARNING']);
+
+        const HEAVY_TIERS = ['tier_1_shiftable', 'tier_2_prep_needed', 'tier_3_comfort'];
+        const CATEGORY_TIER_MAP: Record<string, string> = {
+            ac: 'tier_3_comfort', geyser: 'tier_1_shiftable', washing_machine: 'tier_2_prep_needed',
+        };
+
+        const unmanagedHeavy = (appData || []).filter(a => {
+            if (delegatedIds.has(a.id)) return false;
+            const tier = a.optimization_tier || CATEGORY_TIER_MAP[a.category] || 'tier_4_essential';
+            return HEAVY_TIERS.includes(tier) || a.rated_power_w >= 500;
+        });
+
+        if (unmanagedHeavy.length === 0) return null;
+
+        // 5. Calculate savings
+        const savingsPerHour = Math.round(
+            unmanagedHeavy.reduce((sum: number, a: any) => sum + (a.rated_power_w / 1000) * rateDiff, 0) * 100
+        ) / 100;
+
+        const startH = currentSlot.start_hour;
+        const endH = currentSlot.end_hour;
+        const peakDuration = endH > startH ? endH - startH : 24 - startH + endH;
+        // Remaining peak hours from now
+        const remainingHours = Math.max(0, endH > istHour ? endH - istHour : (24 - istHour + endH));
+        const totalPotentialSavings = Math.round(savingsPerHour * remainingHours * 100) / 100;
+
+        return {
+            appliances: unmanagedHeavy.map((a: any) => ({
+                id: a.id, name: a.name, ratedPowerW: a.rated_power_w, category: a.category,
+            })),
+            savingsPerHour,
+            totalPotentialSavings,
+            peakRate,
+            offPeakRate,
+            peakDurationHours: peakDuration,
+        };
+    } catch (err) {
+        console.error('[API] checkPeakSavingsAlert error:', err);
+        return null;
+    }
+}
+
+/**
+ * Insert a peak savings notification into Supabase (if one doesn't exist recently).
+ * Called from the frontend when peak tariff + unmanaged heavy appliances detected.
+ * Deduplicates by checking for existing unread peak_savings notifications.
+ */
+export async function createPeakSavingsNotification(
+    userId: string,
+    alert: PeakSavingsAlert,
+): Promise<boolean> {
+    try {
+        // Dedup: check if unread peak savings notification exists in the last 2 hours
+        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+        const { data: existing } = await supabase
+            .from('notifications')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('type', 'peak')
+            .eq('is_read', false)
+            .gte('created_at', twoHoursAgo)
+            .limit(5);
+
+        // Check if any of the existing ones are peak_savings_alert subtype
+        if (existing && existing.length > 0) {
+            // Check metadata for subtype (Supabase jsonb filter)
+            const { data: existingAlerts } = await supabase
+                .from('notifications')
+                .select('id')
+                .eq('user_id', userId)
+                .eq('type', 'peak')
+                .eq('is_read', false)
+                .gte('created_at', twoHoursAgo)
+                .contains('metadata', { subtype: 'peak_savings_alert' })
+                .limit(1);
+            if (existingAlerts && existingAlerts.length > 0) return false;
+        }
+
+        const names = alert.appliances.map(a => a.name);
+        const namesStr = names.slice(0, 4).join(', ') + (names.length > 4 ? ` +${names.length - 4} more` : '');
+
+        await supabase.from('notifications').insert({
+            user_id: userId,
+            type: 'peak',
+            title: `💰 ${alert.appliances.length} appliance${alert.appliances.length > 1 ? 's' : ''} running during peak tariff`,
+            message: `${namesStr} running during high tariff period (₹${alert.peakRate}/kWh). Tap to save up to ₹${alert.totalPotentialSavings.toFixed(0)} this peak window.`,
+            icon: 'alert-triangle',
+            color: 'text-amber-600',
+            bg_color: 'bg-amber-50',
+            metadata: {
+                subtype: 'peak_savings_alert',
+                action: 'navigate_optimizer',
+                appliance_ids: alert.appliances.map(a => a.id),
+                appliance_names: alert.appliances.map(a => a.name),
+                savings_per_hour: alert.savingsPerHour,
+                total_potential_savings: alert.totalPotentialSavings,
+                peak_rate: alert.peakRate,
+                off_peak_rate: alert.offPeakRate,
+            },
+        });
+
+        return true;
+    } catch (err) {
+        console.error('[API] createPeakSavingsNotification error:', err);
+        return false;
+    }
 }

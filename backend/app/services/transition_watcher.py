@@ -66,6 +66,114 @@ def _get_heavy_on_appliance_names(db, home_id: str) -> list[str]:
     return names[:5]
 
 
+def _send_peak_savings_notification(
+    db,
+    home_id: str,
+    home: dict,
+    user_id: str,
+    current_slot: dict,
+    slots: list[dict],
+) -> None:
+    """
+    During peak tariff, find high-wattage appliances that are ON but NOT
+    managed by autopilot. Calculate savings and send an actionable notification.
+    """
+    peak_rate = float(current_slot["rate"])
+
+    # Find cheapest slot rate (off-peak)
+    off_peak_rate = peak_rate
+    for s in slots:
+        if float(s["rate"]) < off_peak_rate:
+            off_peak_rate = float(s["rate"])
+    rate_diff = peak_rate - off_peak_rate
+
+    if rate_diff <= 0:
+        return
+
+    # Get IDs of appliances delegated to autopilot
+    delegated_ids: set[str] = set()
+    if home.get("autopilot_enabled"):
+        dac_result = db.table("device_autopilot_config").select("appliance_id").eq(
+            "home_id", home_id
+        ).eq("is_delegated", True).execute()
+        delegated_ids = {r["appliance_id"] for r in (dac_result.data or [])}
+
+    # Get all ON heavy appliances NOT managed by autopilot
+    app_result = db.table("appliances").select(
+        "id, name, rated_power_w, category, optimization_tier"
+    ).eq("home_id", home_id).eq("is_active", True).in_(
+        "status", ["ON", "WARNING"]
+    ).execute()
+
+    heavy_tiers = ("tier_1_shiftable", "tier_2_prep_needed", "tier_3_comfort")
+    # Category-based fallback for tier
+    category_tier_map = {
+        "ac": "tier_3_comfort",
+        "geyser": "tier_1_shiftable",
+        "washing_machine": "tier_2_prep_needed",
+    }
+
+    unmanaged_heavy = []
+    for a in (app_result.data or []):
+        aid = a["id"]
+        # Skip if managed by autopilot
+        if aid in delegated_ids:
+            continue
+        tier = a.get("optimization_tier") or category_tier_map.get(a.get("category", ""), "tier_4_essential")
+        wattage = a.get("rated_power_w", 0)
+        # Include if tier 1-3 OR wattage >= 500W
+        if tier in heavy_tiers or wattage >= 500:
+            unmanaged_heavy.append(a)
+
+    if not unmanaged_heavy:
+        return
+
+    # Calculate total savings per hour
+    total_savings_per_hour = sum(
+        (a["rated_power_w"] / 1000) * rate_diff for a in unmanaged_heavy
+    )
+    total_savings_per_hour = round(total_savings_per_hour, 2)
+
+    # Peak window duration (hours)
+    start_h = current_slot.get("start_hour", 18)
+    end_h = current_slot.get("end_hour", 22)
+    peak_duration = end_h - start_h if end_h > start_h else (24 - start_h + end_h)
+    total_potential_savings = round(total_savings_per_hour * peak_duration, 2)
+
+    names = [a["name"] for a in unmanaged_heavy[:4]]
+    names_str = ", ".join(names)
+    if len(unmanaged_heavy) > 4:
+        names_str += f" +{len(unmanaged_heavy) - 4} more"
+
+    db.table("notifications").insert({
+        "user_id": user_id,
+        "type": "peak",
+        "title": f"💰 {len(unmanaged_heavy)} appliance{'s' if len(unmanaged_heavy) > 1 else ''} running during peak tariff",
+        "message": (
+            f"{names_str} running during high tariff period (₹{peak_rate}/kWh). "
+            f"Tap to save up to ₹{total_potential_savings:.0f} this peak window."
+        ),
+        "icon": "alert-triangle",
+        "color": "text-amber-600",
+        "bg_color": "bg-amber-50",
+        "metadata": {
+            "subtype": "peak_savings_alert",
+            "action": "navigate_optimizer",
+            "appliance_ids": [a["id"] for a in unmanaged_heavy],
+            "appliance_names": [a["name"] for a in unmanaged_heavy],
+            "savings_per_hour": total_savings_per_hour,
+            "total_potential_savings": total_potential_savings,
+            "peak_rate": peak_rate,
+            "off_peak_rate": off_peak_rate,
+        },
+    }).execute()
+
+    logger.info(
+        f"[TransitionWatcher] Peak savings notification for {home_id}: "
+        f"{len(unmanaged_heavy)} unmanaged appliances, ₹{total_potential_savings}/window"
+    )
+
+
 async def tariff_transition_watcher() -> None:
     """
     Runs every 1 minute via APScheduler.
@@ -82,10 +190,6 @@ async def tariff_transition_watcher() -> None:
         current_hour = now.hour
         current_minute = now.minute
 
-        # Only act on the first minute of each hour (slot boundaries)
-        if current_minute != 0:
-            return
-
         db = get_supabase()
 
         # Get all active homes with tariff plans
@@ -95,6 +199,11 @@ async def tariff_transition_watcher() -> None:
 
         if not homes_result.data:
             return
+
+        # Tariff/carbon transition notifications only fire at slot boundaries (:00)
+        # Penalty enforcement fires every 5 minutes for responsiveness
+        is_slot_boundary = current_minute == 0
+        is_enforcement_tick = current_minute % 5 == 0
 
         # Cache tariff slots by plan
         plan_slots_cache: dict[str, list[dict]] = {}
@@ -119,8 +228,8 @@ async def tariff_transition_watcher() -> None:
             current_type = current_slot["slot_type"]
             prev_type = prev_slot["slot_type"]
 
-            # ── Tariff Transition Detection ──
-            tariff_changed = current_type != prev_type
+            # ── Tariff Transition Detection (slot boundary only) ──
+            tariff_changed = is_slot_boundary and current_type != prev_type
             if tariff_changed:
                 logger.info(
                     f"[TransitionWatcher] Home {home_id}: {prev_type} → {current_type} (hour {current_hour})"
@@ -137,6 +246,14 @@ async def tariff_transition_watcher() -> None:
                         "bg_color": "bg-rose-50",
                     }).execute()
 
+                    # ── Smart Peak Alert: Identify non-autopilot heavy appliances ──
+                    try:
+                        _send_peak_savings_notification(
+                            db, home_id, home, user_id, current_slot, slots
+                        )
+                    except Exception as e:
+                        logger.error(f"[TransitionWatcher] Peak savings notif failed for {home_id}: {e}")
+
                 elif prev_type == "peak":
                     db.table("notifications").insert({
                         "user_id": user_id,
@@ -148,8 +265,22 @@ async def tariff_transition_watcher() -> None:
                         "bg_color": "bg-emerald-50",
                     }).execute()
 
-            # ── Carbon Intensity Transition Detection ──
-            try:
+            # ── Carbon Intensity Transition Detection (slot boundary only) ──
+            # Resolve region_code BEFORE try-block so it's available in penalty block too
+            region_code = "IN-BR"  # default fallback
+            if not is_slot_boundary:
+                # Skip carbon transition detection on non-boundary ticks
+                # but still resolve region_code for penalty enforcement below
+                try:
+                    from app.services.carbon import _get_region_for_home
+                    region_code = _get_region_for_home(home_id)
+                except Exception:
+                    pass
+            elif is_slot_boundary:
+                pass  # fall through to the carbon detection block below
+
+            if is_slot_boundary:
+              try:
                 from app.services.carbon import (
                     is_clean_energy_window,
                     _get_region_for_home,
@@ -234,11 +365,11 @@ async def tariff_transition_watcher() -> None:
                         f"{'clean → dirty' if not is_clean_now else 'dirty → clean'}"
                     )
 
-            except Exception as e:
+              except Exception as e:
                 logger.error(f"[TransitionWatcher] Carbon check failed for {home_id}: {e}")
 
-            # ── Penalty-Based Autopilot Trigger ──
-            if home.get("autopilot_enabled"):
+            # ── Penalty-Based Autopilot Trigger (every 5 min) ──
+            if home.get("autopilot_enabled") and is_enforcement_tick:
                 try:
                     from app.services.penalty_engine import (
                         get_current_penalty,
@@ -253,7 +384,20 @@ async def tariff_transition_watcher() -> None:
                     was_above = _last_penalty_cache.get(home_id)
                     _last_penalty_cache[home_id] = is_above_threshold
 
-                    if was_above is not None and is_above_threshold != was_above:
+                    # FIX: On first check (cold start / server restart), if penalty is
+                    # already above threshold, enforce immediately instead of waiting
+                    # for a transition that may never come.
+                    if was_above is None and is_above_threshold:
+                        logger.info(
+                            f"[TransitionWatcher] First run for {home_id}: penalty already above "
+                            f"threshold ({penalty_data['penalty']:.3f}), enforcing now"
+                        )
+                        trigger = "peak_tariff" if current_type == "peak" else "penalty_threshold"
+                        from app.services.autopilot import execute_strategy_action
+                        result = await execute_strategy_action(home_id, user_id, trigger)
+                        logger.info(f"[TransitionWatcher] Autopilot cold-start triggered: {result}")
+
+                    elif was_above is not None and is_above_threshold != was_above:
                         if is_above_threshold:
                             # Penalty crossed threshold — execute strategy
                             trigger = "peak_tariff" if current_type == "peak" else "penalty_threshold"
@@ -265,6 +409,15 @@ async def tariff_transition_watcher() -> None:
                             from app.services.autopilot import execute_strategy_restore
                             result = await execute_strategy_restore(home_id, user_id)
                             logger.info(f"[TransitionWatcher] Autopilot restore: {result}")
+
+                    # FIX: Even if no transition occurred, if penalty is above threshold
+                    # re-check that all delegated devices are actually turned off.
+                    # Handles: user manually turned TV on, or schedule turned it back on.
+                    elif was_above is not None and is_above_threshold and was_above:
+                        from app.services.autopilot import enforce_delegated_devices
+                        result = await enforce_delegated_devices(home_id, user_id, current_type)
+                        if result["enforced"]:
+                            logger.info(f"[TransitionWatcher] Re-enforced {result['enforced']} device(s) for {home_id}")
 
                 except Exception as e:
                     logger.error(f"[TransitionWatcher] Penalty check failed for {home_id}: {e}", exc_info=True)

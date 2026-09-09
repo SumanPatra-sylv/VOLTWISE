@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     tuya_api_endpoint: str = "https://openapi.tuyain.com"
     tuya_device_region: str = "in"
 
+    # Gemini AI (free tier)
+    gemini_api_key: str = ""
+
     # Server
     port: int = 8000
     cors_origins: str = "http://localhost:3000,http://localhost:5173"

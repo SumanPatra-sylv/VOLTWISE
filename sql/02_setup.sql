@@ -625,10 +625,20 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON outage_notices FOR EACH ROW EXECU
 -- ============================================================
 
 -- Admin check helper
+-- Allows access for:
+--   1. Authenticated users with admin/super_admin role (frontend)
+--   2. service_role (FastAPI backend with service key)
+--   3. postgres (Supabase SQL Editor / migrations)
 CREATE OR REPLACE FUNCTION is_admin() RETURNS BOOLEAN AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'super_admin')
-  );
+  SELECT
+    -- service_role key (backend API calls)
+    COALESCE(current_setting('request.jwt.claim.role', true), '') = 'service_role'
+    -- postgres (SQL Editor / migrations)
+    OR session_user = 'postgres'
+    -- authenticated admin users (frontend)
+    OR EXISTS (
+      SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'super_admin')
+    );
 $$ LANGUAGE sql SECURITY DEFINER;
 
 

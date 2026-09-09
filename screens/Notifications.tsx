@@ -1,17 +1,34 @@
-import React, { useState } from 'react';
-import { ArrowLeft, Bell, BellOff, Clock, Zap, AlertTriangle, Calendar, CheckCircle, Trash2, Settings, ChevronRight, Filter, Volume2, VolumeX, Leaf, Shield, Bot } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { ArrowLeft, Bell, BellOff, Clock, Zap, AlertTriangle, Calendar, CheckCircle, Trash2, Settings, ChevronRight, Filter, Volume2, VolumeX, Leaf, Shield, Bot, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useApp } from '../contexts/AppContext';
+import { supabase } from '../services/supabase';
 
 type ViewMode = 'mobile' | 'tablet' | 'web';
 
 interface Props {
   onBack: () => void;
+  onNavigate?: (route: string) => void;
   viewMode?: ViewMode;
 }
 
+interface DBNotification {
+  id: string;
+  user_id: string;
+  type: string;
+  title: string;
+  message: string;
+  is_read: boolean;
+  icon?: string;
+  color?: string;
+  bg_color?: string;
+  metadata?: any;
+  created_at: string;
+}
+
 interface Notification {
-  id: number;
-  type: 'peak' | 'budget' | 'schedule' | 'tip' | 'system' | 'autopilot' | 'carbon';
+  id: string;
+  type: string;
   title: string;
   message: string;
   time: string;
@@ -19,127 +36,106 @@ interface Notification {
   icon: React.ReactNode;
   color: string;
   bgColor: string;
+  metadata?: any;
 }
 
-const Notifications: React.FC<Props> = ({ onBack, viewMode = 'mobile' }) => {
+/** Format relative time from ISO timestamp */
+function formatRelativeTime(isoDate: string): string {
+  const now = new Date();
+  const then = new Date(isoDate);
+  const diffMs = now.getTime() - then.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return 'Just now';
+  if (diffMin < 60) return `${diffMin} min${diffMin > 1 ? 's' : ''} ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr} hour${diffHr > 1 ? 's' : ''} ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay === 1) return 'Yesterday';
+  if (diffDay < 7) return `${diffDay} days ago`;
+  return then.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+}
+
+/** Map DB icon string to React icon element */
+function getNotifIcon(iconName?: string): React.ReactNode {
+  switch (iconName) {
+    case 'zap': return <Zap className="w-5 h-5" />;
+    case 'alert-triangle': return <AlertTriangle className="w-5 h-5" />;
+    case 'check-circle': return <CheckCircle className="w-5 h-5" />;
+    case 'clock': return <Clock className="w-5 h-5" />;
+    case 'calendar': return <Calendar className="w-5 h-5" />;
+    case 'leaf': return <Leaf className="w-5 h-5" />;
+    case 'shield': return <Shield className="w-5 h-5" />;
+    case 'bot': return <Bot className="w-5 h-5" />;
+    case 'heart': return <Leaf className="w-5 h-5" />;
+    default: return <Bell className="w-5 h-5" />;
+  }
+}
+
+const Notifications: React.FC<Props> = ({ onBack, onNavigate, viewMode = 'mobile' }) => {
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const { profile } = useApp();
   
   const isCompact = viewMode === 'web' || viewMode === 'tablet';
 
-  const [notifications, setNotifications] = useState<Notification[]>([
-    {
-      id: 1,
-      type: 'peak',
-      title: 'Peak Hours Starting Soon',
-      message: 'Peak pricing begins in 30 minutes (6:00 PM - 10:00 PM). Consider reducing AC usage.',
-      time: '5 mins ago',
-      read: false,
-      icon: <Zap className="w-5 h-5" />,
-      color: 'text-amber-600',
-      bgColor: 'bg-amber-50',
-    },
-    {
-      id: 2,
-      type: 'budget',
-      title: 'Budget Alert: 80% Used',
-      message: 'You have used ₹1,600 of your ₹2,000 monthly budget. 8 days remaining.',
-      time: '1 hour ago',
-      read: false,
-      icon: <AlertTriangle className="w-5 h-5" />,
-      color: 'text-rose-600',
-      bgColor: 'bg-rose-50',
-    },
-    {
-      id: 3,
-      type: 'schedule',
-      title: 'Geyser Scheduled Off',
-      message: 'Your geyser was automatically turned off at 8:00 AM as scheduled.',
-      time: '3 hours ago',
-      read: true,
-      icon: <Clock className="w-5 h-5" />,
-      color: 'text-cyan-600',
-      bgColor: 'bg-cyan-50',
-    },
-    {
-      id: 4,
-      type: 'tip',
-      title: 'Energy Saving Tip',
-      message: 'Your AC ran for 12 hours yesterday. Setting it to 24°C could save ₹45/day.',
-      time: '6 hours ago',
-      read: true,
-      icon: <Zap className="w-5 h-5" />,
-      color: 'text-emerald-600',
-      bgColor: 'bg-emerald-50',
-    },
-    {
-      id: 5,
-      type: 'schedule',
-      title: 'Washing Machine Reminder',
-      message: 'Best time to run your washing machine is 2:00 PM - 4:00 PM (off-peak rates).',
-      time: 'Yesterday',
-      read: true,
-      icon: <Calendar className="w-5 h-5" />,
-      color: 'text-indigo-600',
-      bgColor: 'bg-indigo-50',
-    },
-    {
-      id: 6,
-      type: 'system',
-      title: 'Weekly Report Ready',
-      message: 'Your energy usage report for last week is now available. You saved ₹320!',
-      time: '2 days ago',
-      read: true,
-      icon: <CheckCircle className="w-5 h-5" />,
-      color: 'text-slate-600',
-      bgColor: 'bg-slate-100',
-    },
-    {
-      id: 7,
-      type: 'peak',
-      title: 'Peak Hours Ended',
-      message: 'Off-peak pricing is now active. This is a good time for high-energy tasks.',
-      time: '3 days ago',
-      read: true,
-      icon: <Zap className="w-5 h-5" />,
-      color: 'text-emerald-600',
-      bgColor: 'bg-emerald-50',
-    },
-    {
-      id: 8,
-      type: 'carbon',
-      title: '🌿 Clean Energy Window',
-      message: 'Grid carbon intensity is low (520 gCO₂/kWh). Run your washing machine now for a lower carbon footprint!',
-      time: '4 hours ago',
-      read: false,
-      icon: <Leaf className="w-5 h-5" />,
-      color: 'text-emerald-600',
-      bgColor: 'bg-green-50',
-    },
-    {
-      id: 9,
-      type: 'tip',
-      title: '💚 Best Time to Run Appliances',
-      message: "It's both cheapest (₹6.31/kWh) AND cleanest (510 gCO₂/kWh) right now — run your heavy appliances to save money and reduce your carbon footprint!",
-      time: '5 hours ago',
-      read: true,
-      icon: <Leaf className="w-5 h-5" />,
-      color: 'text-emerald-600',
-      bgColor: 'bg-emerald-50',
-    },
-    {
-      id: 10,
-      type: 'autopilot',
-      title: '🤖 Autopilot Activated',
-      message: 'Penalty threshold crossed — AC and Geyser turned off by AI (Balanced mode). Override anytime via the app or physical switch.',
-      time: 'Yesterday',
-      read: true,
-      icon: <Bot className="w-5 h-5" />,
-      color: 'text-indigo-600',
-      bgColor: 'bg-indigo-50',
-    },
-  ]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+
+  /** Map a DB row to UI notification */
+  const mapDBNotif = useCallback((row: DBNotification): Notification => ({
+    id: row.id,
+    type: row.type || 'system',
+    title: row.title,
+    message: row.message,
+    time: formatRelativeTime(row.created_at),
+    read: row.is_read,
+    icon: getNotifIcon(row.icon),
+    color: row.color || 'text-slate-600',
+    bgColor: row.bg_color || 'bg-slate-100',
+    metadata: (row as any).metadata || null,
+  }), []);
+
+  /** Fetch notifications from Supabase */
+  useEffect(() => {
+    if (!profile?.id) { setLoading(false); return; }
+    let cancelled = false;
+
+    const fetchNotifications = async () => {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', profile.id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (!cancelled && data && !error) {
+        setNotifications(data.map(mapDBNotif));
+      }
+      if (!cancelled) setLoading(false);
+    };
+
+    fetchNotifications();
+
+    // Realtime subscription for new notifications
+    const channel = supabase
+      .channel('notifications-realtime')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${profile.id}` },
+        (payload) => {
+          const newNotif = mapDBNotif(payload.new as DBNotification);
+          setNotifications(prev => [newNotif, ...prev]);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [profile?.id, mapDBNotif]);
 
   const notificationSettings = [
     { id: 'peak', label: 'Peak Hour Alerts', description: 'Get notified before peak pricing starts', enabled: true },
@@ -156,20 +152,28 @@ const Notifications: React.FC<Props> = ({ onBack, viewMode = 'mobile' }) => {
     ? notifications.filter(n => !n.read)
     : notifications;
 
-  const markAsRead = (id: number) => {
+  const markAsRead = async (id: string) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    await supabase.from('notifications').update({ is_read: true }).eq('id', id);
   };
 
-  const markAllAsRead = () => {
+  const markAllAsRead = async () => {
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    if (profile?.id) {
+      await supabase.from('notifications').update({ is_read: true }).eq('user_id', profile.id).eq('is_read', false);
+    }
   };
 
-  const deleteNotification = (id: number) => {
+  const deleteNotification = async (id: string) => {
     setNotifications(prev => prev.filter(n => n.id !== id));
+    await supabase.from('notifications').delete().eq('id', id);
   };
 
-  const clearAll = () => {
+  const clearAll = async () => {
     setNotifications([]);
+    if (profile?.id) {
+      await supabase.from('notifications').delete().eq('user_id', profile.id);
+    }
   };
 
   return (
@@ -287,7 +291,12 @@ const Notifications: React.FC<Props> = ({ onBack, viewMode = 'mobile' }) => {
       </div>
 
       {/* Notifications List */}
-      {filteredNotifications.length === 0 ? (
+      {loading ? (
+        <div className={`bg-white shadow-soft border border-slate-100 text-center ${isCompact ? 'rounded-2xl p-8' : 'rounded-[2rem] p-12'}`}>
+          <Loader2 className={`animate-spin text-cyan-500 mx-auto mb-3 ${isCompact ? 'w-8 h-8' : 'w-10 h-10'}`} />
+          <p className={`text-slate-500 ${isCompact ? 'text-xs' : 'text-sm'}`}>Loading notifications...</p>
+        </div>
+      ) : filteredNotifications.length === 0 ? (
         <div className={`bg-white shadow-soft border border-slate-100 text-center ${isCompact ? 'rounded-2xl p-8' : 'rounded-[2rem] p-12'}`}>
           <div className={`rounded-full bg-slate-100 flex items-center justify-center mx-auto mb-4 ${isCompact ? 'w-16 h-16' : 'w-20 h-20'}`}>
             <Bell className={`text-slate-400 ${isCompact ? 'w-8 h-8' : 'w-10 h-10'}`} />
@@ -334,6 +343,20 @@ const Notifications: React.FC<Props> = ({ onBack, viewMode = 'mobile' }) => {
                   <p className={`text-slate-500 mt-1 ${isCompact ? 'text-[10px]' : 'text-xs'}`}>
                     {notification.message}
                   </p>
+                  {/* Fix / Action button for peak savings notifications */}
+                  {notification.metadata?.subtype === 'peak_savings_alert' && notification.metadata?.action === 'navigate_optimizer' && onNavigate && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        markAsRead(notification.id);
+                        onNavigate('/optimizer');
+                      }}
+                      className={`mt-2 inline-flex items-center gap-1.5 bg-amber-500 text-white font-bold rounded-lg shadow-sm hover:bg-amber-600 active:scale-95 transition-all ${isCompact ? 'px-3 py-1 text-[10px]' : 'px-4 py-1.5 text-xs'}`}
+                    >
+                      <Zap className={isCompact ? 'w-3 h-3' : 'w-3.5 h-3.5'} />
+                      Fix — Save ₹{notification.metadata?.total_potential_savings?.toFixed(0) || '?'}
+                    </button>
+                  )}
                   <p className={`text-slate-400 mt-2 font-medium ${isCompact ? 'text-[9px]' : 'text-[10px]'}`}>
                     {notification.time}
                   </p>

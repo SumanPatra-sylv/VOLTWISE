@@ -11,6 +11,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ArrowLeft, Power, PowerOff, Zap, Leaf, Calendar, ChevronRight, Loader2, AlertTriangle, PlayCircle, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useApp } from '../contexts/AppContext';
@@ -60,6 +61,7 @@ function TierBadge({ tier }: { tier: string }) {
 // ── Main Component ────────────────────────────────────────────────
 
 const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) => {
+    const { t } = useTranslation();
     const { home } = useApp();
 
     const [appliances, setAppliances] = useState<DBAppliance[]>([]);
@@ -209,10 +211,10 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
                     )}
                     <div>
                         <h1 className="text-xl font-bold text-slate-800">
-                            {alert.isCurrentlyPeak ? '⚡ Peak Tariff Active' : isOffPeak ? '✅ Off-Peak' : '📊 Normal Tariff'}
+                            {alert.isCurrentlyPeak ? t('optimizer.peakActive') : isOffPeak ? t('optimizer.offPeak') : t('optimizer.normalTariff')}
                         </h1>
                         <p className="text-sm text-slate-500">
-                            Current rate: ₹{alert.currentRate.toFixed(2)}/kWh ({currentSlot?.slot_type || '—'})
+                            {t('optimizer.currentRate')}: ₹{alert.currentRate.toFixed(2)}{t('optimizer.perKwh')} ({currentSlot?.slot_type || '—'})
                         </p>
                     </div>
                 </div>
@@ -229,10 +231,10 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
                             <div className="flex items-center justify-between mb-3">
                                 <div>
                                     <p className="text-sm font-bold text-rose-600">
-                                        ⚠️ {alert.heavyAppliancesOn.length} heavy appliance{alert.heavyAppliancesOn.length > 1 ? 's' : ''} running at peak rate
+                                        ⚠️ {t('optimizer.heavyRunning', { count: alert.heavyAppliancesOn.length })}
                                     </p>
                                     <p className="text-xs text-slate-500">
-                                        Possible savings: <span className="font-bold text-emerald-600">₹{alert.totalSavingsPerHour.toFixed(2)}/hr</span>
+                                        {t('optimizer.possibleSavings')}: <span className="font-bold text-emerald-600">₹{alert.totalSavingsPerHour.toFixed(2)}{t('optimizer.perHour')}</span>
                                     </p>
                                 </div>
                                 <button
@@ -241,7 +243,7 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
                                     className="flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-500 text-white font-bold text-xs hover:bg-rose-600 transition-colors shadow-lg shadow-rose-200 disabled:opacity-60"
                                 >
                                     {turningOffAll ? <Loader2 className="w-3 h-3 animate-spin" /> : <PowerOff className="w-3 h-3" />}
-                                    Turn Off All
+                                    {t('optimizer.turnOffAll')}
                                 </button>
                             </div>
                         </motion.div>
@@ -357,7 +359,7 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
                                 onClick={() => setActionSheetAppliance(fullAppliance)}
                                 className="px-3 py-2 rounded-xl bg-indigo-50 text-indigo-600 font-bold text-xs hover:bg-indigo-100 transition-colors flex items-center gap-1"
                             >
-                                Fix <ChevronRight className="w-3 h-3" />
+                                {t('optimizer.fix')} <ChevronRight className="w-3 h-3" />
                             </button>
                         </motion.div>
                     );
@@ -366,7 +368,7 @@ const Optimizer: React.FC<OptimizerProps> = ({ viewMode = 'mobile', onBack }) =>
                 {/* Peak: show eco-active appliances as "Already Optimized" */}
                 {alert.isCurrentlyPeak && alert.heavyAppliancesEcoActive.length > 0 && (
                     <>
-                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1 mt-6">Already Optimized</h3>
+                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1 mt-6">{t('optimizer.alreadyOptimized')}</h3>
                         {alert.heavyAppliancesEcoActive.map((a, i) => (
                             <motion.div
                                 key={a.id}

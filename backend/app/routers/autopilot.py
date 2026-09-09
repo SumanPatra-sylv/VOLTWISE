@@ -131,7 +131,7 @@ class OverrideRecord(BaseModel):
 # ══════════════════════════════════════════════════════════════════════
 
 @router.get("/rules", response_model=list[RuleResponse])
-async def list_rules(
+def list_rules(
     home_id: str = Query(...),
     user: dict = Depends(get_current_user),
 ):
@@ -145,7 +145,7 @@ async def list_rules(
 
 
 @router.post("/rules", response_model=RuleResponse)
-async def create_rule(
+def create_rule(
     body: RuleCreate,
     user: dict = Depends(get_current_user),
 ):
@@ -172,7 +172,7 @@ async def create_rule(
 
 
 @router.put("/rules/{rule_id}", response_model=RuleResponse)
-async def update_rule(
+def update_rule(
     rule_id: str,
     body: RuleUpdate,
     user: dict = Depends(get_current_user),
@@ -191,7 +191,7 @@ async def update_rule(
 
 
 @router.delete("/rules/{rule_id}")
-async def delete_rule(
+def delete_rule(
     rule_id: str,
     user: dict = Depends(get_current_user),
 ):
@@ -202,7 +202,7 @@ async def delete_rule(
 
 
 @router.post("/toggle")
-async def toggle_autopilot(
+def toggle_autopilot(
     body: AutopilotToggle,
     user: dict = Depends(get_current_user),
 ):
@@ -231,7 +231,7 @@ async def toggle_autopilot(
 
 
 @router.get("/status", response_model=AutopilotStatus)
-async def get_status(
+def get_status(
     home_id: str = Query(...),
     user: dict = Depends(get_current_user),
 ):
@@ -278,7 +278,7 @@ async def get_status(
 
 
 @router.post("/simulate", response_model=SimulationResult)
-async def simulate_peak(
+def simulate_peak(
     home_id: str = Query(...),
     user: dict = Depends(get_current_user),
 ):
@@ -307,7 +307,18 @@ async def simulate_peak(
             app = appliances[aid]
             if app["status"] in ("ON", "WARNING"):
                 power_kw = app.get("rated_power_w", 0) / 1000
-                savings = power_kw * 3.24
+                # Use the home's actual peak tariff rate instead of hardcoded magic number
+                peak_rate = 3.24  # fallback
+                try:
+                    slots_r = db.table("tariff_slots").select("rate").eq(
+                        "plan_id",
+                        db.table("homes").select("tariff_plan_id").eq("id", home_id).limit(1).execute().data[0]["tariff_plan_id"]
+                    ).eq("slot_type", "peak").limit(1).execute()
+                    if slots_r.data:
+                        peak_rate = float(slots_r.data[0]["rate"])
+                except Exception:
+                    pass  # use fallback
+                savings = power_kw * peak_rate
                 would_affect.append({
                     "appliance_id": aid,
                     "name": app.get("name"),
@@ -329,7 +340,7 @@ async def simulate_peak(
 # ══════════════════════════════════════════════════════════════════════
 
 @router.put("/strategy")
-async def set_strategy(
+def set_strategy(
     body: StrategyUpdate,
     user: dict = Depends(get_current_user),
 ):
@@ -349,7 +360,7 @@ async def set_strategy(
 
 
 @router.put("/grid-protection")
-async def toggle_grid_protection(
+def toggle_grid_protection(
     body: GridProtectionToggle,
     user: dict = Depends(get_current_user),
 ):
@@ -365,7 +376,7 @@ async def toggle_grid_protection(
 
 
 @router.get("/penalty-timeline")
-async def get_penalty_timeline(
+def get_penalty_timeline(
     home_id: str = Query(...),
     user: dict = Depends(get_current_user),
 ):
@@ -404,7 +415,7 @@ async def get_penalty_timeline(
 
 
 @router.get("/carbon-now")
-async def get_carbon_now(
+def get_carbon_now(
     home_id: str = Query(...),
     user: dict = Depends(get_current_user),
 ):
@@ -419,7 +430,7 @@ async def get_carbon_now(
 
 
 @router.post("/device-config")
-async def upsert_device_config(
+def upsert_device_config(
     body: DeviceConfigUpsert,
     user: dict = Depends(get_current_user),
 ):
@@ -455,7 +466,7 @@ async def upsert_device_config(
 
 
 @router.get("/device-config")
-async def list_device_configs(
+def list_device_configs(
     home_id: str = Query(...),
     user: dict = Depends(get_current_user),
 ):
@@ -469,7 +480,7 @@ async def list_device_configs(
 
 
 @router.post("/override")
-async def record_override(
+def record_override(
     body: OverrideRecord,
     user: dict = Depends(get_current_user),
 ):
@@ -543,7 +554,7 @@ async def get_grid_status(
         }
 
     from app.services.grid_protection import check_grid_status
-    grid_status = check_grid_status(discom_id)
+    grid_status = await check_grid_status(discom_id)
 
     return {
         "grid_protection_enabled": grid_enabled,

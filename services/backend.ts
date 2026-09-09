@@ -455,6 +455,130 @@ export async function getPowerSources(homeId: string): Promise<{ sources: PowerS
     return apiFetch(`/power-analytics/sources?home_id=${homeId}`);
 }
 
+<<<<<<< HEAD
+// ── Billing API ───────────────────────────────────────────────────
+
+export interface BillingMonthEntry {
+    month: number;
+    month_name: string;
+    month_short: string;
+    total_kwh: number;
+    total_amount: number;
+    energy_charge: number;
+    status: 'paid' | 'pending' | 'current' | 'future' | 'error';
+    due_date: string | null;
+}
+
+export interface BillingYearlySummary {
+    year: number;
+    home_id: string;
+    months: BillingMonthEntry[];
+    annual_total: number;
+    annual_kwh: number;
+    avg_monthly: number;
+    lowest_month: BillingMonthEntry | null;
+    highest_month: BillingMonthEntry | null;
+}
+
+export interface SlabBreakdown {
+    from_kwh: number;
+    to_kwh: number | null;
+    rate_per_kwh: number;
+    kwh_billed: number;
+    cost: number;
+}
+
+export interface TodBreakdownEntry {
+    kwh: number;
+    adjustment: number;
+}
+
+export interface DailyAuditEntry {
+    date: string;
+    kwh: number;
+    cost: number;
+}
+
+export interface EffectiveRateEntry {
+    base_rate: number;
+    modifier: number;
+    effective: number;
+}
+
+export interface BillData {
+    // Consumer
+    consumer_name: string;
+    consumer_number: string;
+    consumer_phone: string;
+    // DISCOM
+    discom_name: string;
+    discom_code: string;
+    plan_name: string;
+    // Meter
+    meter_number: string;
+    meter_type: string;
+    sanctioned_load_kw: number;
+    // Bill
+    year: number;
+    month: number;
+    month_name: string;
+    total_kwh: number;
+    energy_charge: number;
+    fixed_charge: number;
+    tod_adjustment: number;
+    electricity_duty: number;
+    fac: number;
+    total_amount: number;
+    slab_breakdown: SlabBreakdown[];
+    tod_breakdown: Record<string, TodBreakdownEntry>;
+    daily_audit: DailyAuditEntry[];
+    data_source: 'interval_readings' | 'daily_aggregates';
+    interval_count: number;
+    // Rates
+    effective_rates: Record<string, EffectiveRateEntry>;
+    slabs: Array<{ from_kwh: number; to_kwh: number | null; rate_per_kwh: number }>;
+}
+
+export interface EffectiveRates {
+    plan_name: string;
+    discom_name: string;
+    discom_code: string;
+    slabs: Array<{ from_kwh: number; to_kwh: number | null; rate_per_kwh: number }>;
+    effective_rates: Record<string, EffectiveRateEntry>;
+    fixed_charge_per_kw: number;
+    sanctioned_load_kw: number;
+}
+
+/** Get 12-month billing summary for a year. */
+export async function getBillingMonthlySummary(
+    homeId: string,
+    year: number,
+): Promise<BillingYearlySummary> {
+    return apiFetch<BillingYearlySummary>(
+        `/billing/monthly-summary?home_id=${homeId}&year=${year}`,
+    );
+}
+
+/** Get full bill data for a single month (PDF-ready). */
+export async function getBillingBillData(
+    homeId: string,
+    year: number,
+    month: number,
+): Promise<BillData> {
+    return apiFetch<BillData>(
+        `/billing/bill-data?home_id=${homeId}&year=${year}&month=${month}`,
+    );
+}
+
+/** Get current effective rates (slab + ToD). */
+export async function getBillingEffectiveRates(
+    homeId: string,
+): Promise<EffectiveRates> {
+    return apiFetch<EffectiveRates>(
+        `/billing/effective-rates?home_id=${homeId}`,
+    );
+}
+=======
 // ── Smart Plug API ────────────────────────────────────────────────
 
 export interface PlugStatusData {
@@ -572,3 +696,4 @@ export async function unregisterPlug(plugId: string): Promise<{ success: boolean
     return apiFetch(`/plugs/${plugId}`, { method: 'DELETE' });
 }
 
+>>>>>>> 79c5f54edac01d3623b65df8fcd602cf694f9d25

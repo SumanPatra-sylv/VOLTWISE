@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Globe, Users, Zap, TrendingDown, TrendingUp, ArrowDownRight, ArrowUpRight, Scale, TreePine, Leaf, Activity } from 'lucide-react';
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { getCarbonDashboard, CarbonDashboardData } from '../services/api';
@@ -11,6 +12,7 @@ interface RewardsProps {
 }
 
 const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
+  const { t } = useTranslation();
   const isMobileView = viewMode === 'mobile';
   const { home, isAuthReady } = useApp();
   const [data, setData] = useState<CarbonDashboardData | null>(null);
@@ -59,10 +61,10 @@ const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
         {/* Header */}
         <div className="mb-4 sm:mb-6">
           <div className="flex items-center gap-2 sm:gap-3 mb-0.5">
-            <h1 className="text-xl sm:text-3xl font-bold text-slate-800">Carbon Impact</h1>
+            <h1 className="text-xl sm:text-3xl font-bold text-slate-800">{t('carbon.title')}</h1>
             <Globe className="w-5 sm:w-7 text-cyan-500 flex-shrink-0" />
           </div>
-          <p className="text-slate-500 text-xs sm:text-sm">Your environmental footprint this month</p>
+          <p className="text-slate-500 text-xs sm:text-sm">{t('carbon.subtitle')}</p>
         </div>
 
         {/* ── Hero Card: Total CO₂ Emitted ─────────────────────────── */}
@@ -88,7 +90,7 @@ const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
             <div className="mb-3 sm:mb-4">
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 border border-white/10">
                 <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
-                <span className="text-white/60 text-[10px] sm:text-xs font-semibold uppercase tracking-wider">Total Emissions</span>
+                <span className="text-white/60 text-[10px] sm:text-xs font-semibold uppercase tracking-wider">{t('carbon.totalEmissions')}</span>
               </div>
             </div>
 
@@ -118,21 +120,21 @@ const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
               <div className="px-2 py-1.5 rounded-lg bg-white/5 border border-white/10">
                 <div className="flex items-center gap-1 mb-0.5">
                   <Users className="w-2.5 sm:w-3.5 h-2.5 sm:h-3.5 text-cyan-400" />
-                  <span className="text-white/40 text-[7px] sm:text-[9px] font-semibold uppercase">Per Person</span>
+                  <span className="text-white/40 text-[7px] sm:text-[9px] font-semibold uppercase">{t('carbon.perPerson')}</span>
                 </div>
                 <span className="text-white font-bold text-[10px] sm:text-sm">{data?.perCapitaKg ?? 0} kg</span>
               </div>
               <div className="px-2 py-1.5 rounded-lg bg-white/5 border border-white/10">
                 <div className="flex items-center gap-1 mb-0.5">
                   <Zap className="w-2.5 sm:w-3.5 h-2.5 sm:h-3.5 text-amber-400" />
-                  <span className="text-white/40 text-[7px] sm:text-[9px] font-semibold uppercase">kWh Used</span>
+                  <span className="text-white/40 text-[7px] sm:text-[9px] font-semibold uppercase">{t('carbon.kwhUsed')}</span>
                 </div>
                 <span className="text-white font-bold text-[10px] sm:text-sm">{data?.monthlyKwh ?? 0}</span>
               </div>
               <div className="px-2 py-1.5 rounded-lg bg-white/5 border border-white/10">
                 <div className="flex items-center gap-1 mb-0.5">
                   <Users className="w-2.5 sm:w-3.5 h-2.5 sm:h-3.5 text-indigo-400" />
-                  <span className="text-white/40 text-[7px] sm:text-[9px] font-semibold uppercase">Members</span>
+                  <span className="text-white/40 text-[7px] sm:text-[9px] font-semibold uppercase">{t('carbon.members')}</span>
                 </div>
                 <span className="text-white font-bold text-[10px] sm:text-sm">{data?.householdMembers ?? 0}</span>
               </div>
@@ -149,7 +151,7 @@ const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
               <div className="w-9 h-9 rounded-2xl bg-cyan-50 flex items-center justify-center">
                 <Globe className="w-4 h-4 text-cyan-600" />
               </div>
-              <span className="text-[9px] font-semibold text-cyan-700 bg-cyan-50 px-2 py-0.5 rounded-full">Emitted</span>
+              <span className="text-[9px] font-semibold text-cyan-700 bg-cyan-50 px-2 py-0.5 rounded-full">{t('carbon.emitted')}</span>
             </div>
             <div>
               <p className="text-[10px] font-medium text-slate-400 mb-0.5">Total CO₂ this month</p>
@@ -172,11 +174,11 @@ const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
                 }
               </div>
               <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${(data?.monthChangePercent ?? 0) <= 0 ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'}`}>
-                {(data?.monthChangePercent ?? 0) <= 0 ? 'Improving' : 'Up'}
+                {(data?.monthChangePercent ?? 0) <= 0 ? t('carbon.improving') : t('carbon.up')}
               </span>
             </div>
             <div>
-              <p className="text-[10px] font-medium text-slate-400 mb-0.5">vs Last Month</p>
+              <p className="text-[10px] font-medium text-slate-400 mb-0.5">{t('carbon.vsLastMonth')}</p>
               <div className="flex items-baseline gap-1">
                 <span className={`text-2xl font-extrabold ${(data?.monthChangePercent ?? 0) <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                   {loading ? '--' : `${data?.monthChangePercent ?? 0}%`}
@@ -191,10 +193,10 @@ const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
               <div className="w-9 h-9 rounded-2xl bg-amber-50 flex items-center justify-center">
                 <Zap className="w-4 h-4 text-amber-600" />
               </div>
-              <span className="text-[9px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Shifted</span>
+              <span className="text-[9px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">{t('carbon.shifted')}</span>
             </div>
             <div>
-              <p className="text-[10px] font-medium text-slate-400 mb-0.5">CO₂ saved via shifting</p>
+              <p className="text-[10px] font-medium text-slate-400 mb-0.5">{t('carbon.co2Shifted')}</p>
               <div className="flex items-baseline gap-1">
                 <span className="text-2xl font-extrabold text-amber-700">
                   {loading ? '--' : data?.co2ReducedViaShiftKg ?? 0}
@@ -229,15 +231,15 @@ const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
               <div className="w-9 h-9 rounded-2xl bg-emerald-50 flex items-center justify-center">
                 <TreePine className="w-4 h-4 text-emerald-600" />
               </div>
-              <span className="text-[9px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">Impact</span>
+              <span className="text-[9px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">{t('carbon.impact')}</span>
             </div>
             <div>
-              <p className="text-[10px] font-medium text-slate-400 mb-0.5">Trees equivalent saved</p>
+              <p className="text-[10px] font-medium text-slate-400 mb-0.5">{t('carbon.treesSaved')}</p>
               <div className="flex items-baseline gap-1">
                 <span className="text-2xl font-extrabold text-emerald-700">
                   {loading ? '--' : data?.treesEquivalent ?? 0}
                 </span>
-                <span className="text-[10px] font-semibold text-slate-400">trees/mo</span>
+                <span className="text-[10px] font-semibold text-slate-400">{t('carbon.treesPerMonth')}</span>
               </div>
             </div>
           </div>
@@ -248,18 +250,18 @@ const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
               <div className="w-9 h-9 rounded-2xl bg-violet-50 flex items-center justify-center">
                 <Activity className="w-4 h-4 text-violet-600" />
               </div>
-              <span className="text-[9px] font-semibold text-violet-700 bg-violet-50 px-2 py-0.5 rounded-full">Live</span>
+              <span className="text-[9px] font-semibold text-violet-700 bg-violet-50 px-2 py-0.5 rounded-full">{t('carbon.live')}</span>
             </div>
             <div>
-              <p className="text-[10px] font-medium text-slate-400 mb-0.5">Grid carbon intensity</p>
+              <p className="text-[10px] font-medium text-slate-400 mb-0.5">{t('carbon.gridIntensity')}</p>
               <div className="flex items-center gap-2">
                 <div className="flex flex-col">
-                  <span className="text-[8px] text-rose-500 font-semibold">PEAK</span>
+                  <span className="text-[8px] text-rose-500 font-semibold">{t('carbon.peak')}</span>
                   <span className="text-sm font-extrabold text-rose-700">{data?.peakCarbonIntensity ?? '--'}</span>
                 </div>
                 <div className="w-px h-6 bg-slate-200" />
                 <div className="flex flex-col">
-                  <span className="text-[8px] text-emerald-500 font-semibold">OFF-PK</span>
+                  <span className="text-[8px] text-emerald-500 font-semibold">{t('carbon.offPeak')}</span>
                   <span className="text-sm font-extrabold text-emerald-700">{data?.offPeakCarbonIntensity ?? '--'}</span>
                 </div>
                 <span className="text-[8px] text-slate-400 self-end">g/kWh</span>
@@ -277,22 +279,22 @@ const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
                 <Leaf className="w-5 h-5 text-emerald-600" />
               </div>
               <div>
-                <h3 className="font-bold text-emerald-800 text-sm">Your CO₂ Footprint Reduction</h3>
-                <p className="text-[11px] text-emerald-600/70">Per-household sustainability impact this month</p>
+                <h3 className="font-bold text-emerald-800 text-sm">{t('carbon.footprintTitle')}</h3>
+                <p className="text-[11px] text-emerald-600/70">{t('carbon.footprintSubtitle')}</p>
               </div>
             </div>
             <div className="grid grid-cols-3 gap-2">
               <div className="bg-white/70 rounded-xl p-3 text-center">
                 <p className="text-xl font-extrabold text-emerald-700">{data.co2AvoidedKg}</p>
-                <p className="text-[9px] text-emerald-600 font-medium">kg CO₂ avoided</p>
+                <p className="text-[9px] text-emerald-600 font-medium">{t('carbon.co2Avoided')}</p>
               </div>
               <div className="bg-white/70 rounded-xl p-3 text-center">
                 <p className="text-xl font-extrabold text-emerald-700">{data.treesEquivalent}</p>
-                <p className="text-[9px] text-emerald-600 font-medium">trees equivalent</p>
+                <p className="text-[9px] text-emerald-600 font-medium">{t('carbon.treesEquivalent')}</p>
               </div>
               <div className="bg-white/70 rounded-xl p-3 text-center">
                 <p className="text-xl font-extrabold text-emerald-700">{data.kwhShifted}</p>
-                <p className="text-[9px] text-emerald-600 font-medium">kWh shifted</p>
+                <p className="text-[9px] text-emerald-600 font-medium">{t('carbon.kwhShiftedLabel')}</p>
               </div>
             </div>
           </div>
@@ -303,8 +305,8 @@ const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
           <div className="bg-white rounded-[2rem] shadow-soft border border-slate-100 p-4 sm:p-6 mb-4 sm:mb-6">
             <div className="flex justify-between items-center mb-4">
               <div>
-                <h3 className="text-sm sm:text-lg font-bold text-slate-800">Daily CO₂ Trend</h3>
-                <p className="text-[10px] sm:text-xs text-slate-400 font-medium">kg CO₂ from daily_aggregates — last 30 days</p>
+                <h3 className="text-sm sm:text-lg font-bold text-slate-800">{t('carbon.dailyTrend')}</h3>
+                <p className="text-[10px] sm:text-xs text-slate-400 font-medium">{t('carbon.dailyTrendSub')}</p>
               </div>
             </div>
             <div className="h-40 sm:h-48 w-full">
@@ -338,8 +340,8 @@ const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
               <Scale className="w-5 h-5 text-sky-600" />
             </div>
             <div>
-              <h3 className="font-bold text-slate-800 text-sm">Optimization Impact</h3>
-              <p className="text-[11px] text-slate-400">What if you didn't shift load?</p>
+              <h3 className="font-bold text-slate-800 text-sm">{t('carbon.optimizationImpact')}</h3>
+              <p className="text-[11px] text-slate-400">{t('carbon.whatIf')}</p>
             </div>
           </div>
 
@@ -348,7 +350,7 @@ const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
               {/* Shifted kWh info */}
               <div className="px-3 py-2 bg-slate-50 rounded-xl border border-slate-100">
                 <div className="flex justify-between items-center">
-                  <span className="text-xs text-slate-500">kWh shifted (Peak → Off-Peak)</span>
+                  <span className="text-xs text-slate-500">{t('carbon.kwhShiftedPeakOff')}</span>
                   <span className="text-sm font-bold text-slate-700">{data.kwhShifted} kWh</span>
                 </div>
               </div>
@@ -358,7 +360,7 @@ const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-2">
                     <ArrowUpRight className="w-3.5 h-3.5 text-rose-500" />
-                    <span className="text-xs font-medium text-rose-700">Without optimization</span>
+                    <span className="text-xs font-medium text-rose-700">{t('carbon.withoutOpt')}</span>
                   </div>
                   <span className="text-sm font-bold text-rose-700">{data.withoutOptimizationKg} kg CO₂</span>
                 </div>
@@ -372,7 +374,7 @@ const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-2">
                     <ArrowDownRight className="w-3.5 h-3.5 text-emerald-500" />
-                    <span className="text-xs font-medium text-emerald-700">With optimization</span>
+                    <span className="text-xs font-medium text-emerald-700">{t('carbon.withOpt')}</span>
                   </div>
                   <span className="text-sm font-bold text-emerald-700">{data.withOptimizationKg} kg CO₂</span>
                 </div>
@@ -397,8 +399,8 @@ const Rewards: React.FC<RewardsProps> = ({ viewMode = 'mobile' }) => {
               <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-3">
                 <Zap className="w-6 h-6 text-slate-300" />
               </div>
-              <p className="text-sm text-slate-400 font-medium">No load shifting data yet</p>
-              <p className="text-[11px] text-slate-300 mt-1">Start using the Optimizer to shift peak usage</p>
+              <p className="text-sm text-slate-400 font-medium">{t('carbon.noShiftData')}</p>
+              <p className="text-[11px] text-slate-300 mt-1">{t('carbon.startOptimizer')}</p>
             </div>
           )}
         </div>

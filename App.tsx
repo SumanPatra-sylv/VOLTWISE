@@ -49,12 +49,12 @@ const BillHistoryRoute: React.FC<{ viewMode: ViewMode }> = ({ viewMode }) => {
 
 const NotificationsRoute: React.FC<{ viewMode: ViewMode }> = ({ viewMode }) => {
   const navigate = useNavigate();
-  return <Notifications onBack={() => navigate('/profile')} viewMode={viewMode} />;
+  return <Notifications onBack={() => navigate('/profile')} onNavigate={(route: string) => navigate(route)} viewMode={viewMode} />;
 };
 
 // ── Main App ───────────────────────────────────────────────────────
 const App: React.FC = () => {
-  const { viewMode, setViewMode, user, profile, home, isLoading, isAuthReady } = useApp();
+  const { viewMode, setViewMode, user, profile, home, isLoading, isAuthReady, viewAsConsumer } = useApp();
 
   // Show splash while checking auth
   if (isLoading || !isAuthReady) {
@@ -66,8 +66,8 @@ const App: React.FC = () => {
     return <Onboarding />;
   }
 
-  // Admin users get a separate dashboard
-  if (profile.role === 'admin' || profile.role === 'super_admin') {
+  // Admin users get a separate dashboard (unless viewing as consumer)
+  if ((profile.role === 'admin' || profile.role === 'super_admin') && !viewAsConsumer) {
     return <AdminDashboard />;
   }
 
@@ -150,7 +150,7 @@ const HomeWithNav: React.FC<{ viewMode: ViewMode }> = ({ viewMode }) => {
     };
     navigate(routes[tab] || '/');
   };
-  return <Home onNavigate={handleNavigate as any} viewMode={viewMode} />;
+  return <Home onNavigate={handleNavigate} viewMode={viewMode} />;
 };
 
 const ProfileWithNav: React.FC<{ viewMode: ViewMode }> = ({ viewMode }) => {
@@ -163,7 +163,7 @@ const ProfileWithNav: React.FC<{ viewMode: ViewMode }> = ({ viewMode }) => {
     };
     navigate(routes[tab] || '/profile');
   };
-  return <Profile viewMode={viewMode} onNavigate={handleNavigate as any} />;
+  return <Profile viewMode={viewMode} onNavigate={handleNavigate} />;
 };
 
 // ── Floating Optimize Button ───────────────────────────────────────

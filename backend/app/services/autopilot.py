@@ -367,6 +367,93 @@ async def execute_strategy_restore(home_id: str, user_id: str | None) -> dict:
     return {"actions": actions_taken, "message": f"Restored {len(actions_taken)} appliances"}
 
 
+# ── Re-enforcement for steady-state high-penalty (every 5 min) ───────
+
+async def enforce_delegated_devices(
+    home_id: str,
+    user_id: str | None,
+    current_slot_type: str = "peak",
+) -> dict:
+    """
+    Called periodically while penalty is above threshold.
+    Re-checks delegated devices that SHOULD be off/eco but aren't
+    (e.g. user manually toggled TV back on, or a schedule fired).
+
+    Only acts on devices that are ON but should be managed — does NOT
+    send duplicate notifications for devices already off.
+    """
+    db = get_supabase()
+    enforced = 0
+
+    # Get delegated device configs
+    configs_result = db.table("device_autopilot_config").select("*").eq(
+        "home_id", home_id
+    ).eq("is_delegated", True).execute()
+
+    configs = configs_result.data or []
+    if not configs:
+        return {"enforced": 0}
+
+    # Get appliances
+    app_result = db.table("appliances").select("*").eq(
+        "home_id", home_id
+    ).eq("is_active", True).eq("is_controllable", True).execute()
+    appliances = {a["id"]: a for a in (app_result.data or [])}
+
+    for config in configs:
+        aid = config["appliance_id"]
+        if aid not in appliances:
+            continue
+
+        appliance = appliances[aid]
+
+        # Only act if the device is ON but supposed to be managed
+        if appliance["status"] not in ("ON", "WARNING"):
+            continue
+
+        # Skip if override active
+        if config.get("override_active", False) or config.get("user_override_active", False):
+            continue
+
+        # This device is ON during high penalty — turn it off
+        preferred_action = config.get("preferred_action", "delay_start")
+        try:
+            adapter = get_adapter(appliance)
+
+            if preferred_action in ("turn_off", "delay_start"):
+                result = await adapter.turn_off(aid)
+                _log_action(db, aid, user_id, "turn_off", "autopilot_re_enforce", result.success)
+                if result.success:
+                    enforced += 1
+                    logger.info(
+                        f"[Autopilot] Re-enforced turn_off on {appliance.get('name')} "
+                        f"(was ON during {current_slot_type})"
+                    )
+
+            elif preferred_action in ("eco_mode", "limit_power"):
+                if not appliance.get("eco_mode_enabled"):
+                    result = await adapter.set_eco_mode(aid, True)
+                    _log_action(db, aid, user_id, "eco_mode_on", "autopilot_re_enforce", result.success)
+                    if result.success:
+                        enforced += 1
+
+        except Exception as e:
+            logger.error(f"[Autopilot] Re-enforce failed for {aid}: {e}")
+
+    if enforced and user_id:
+        db.table("notifications").insert({
+            "user_id": user_id,
+            "type": "autopilot",
+            "title": "🤖 Autopilot: Re-enforcing Peak Rules",
+            "message": f"Turned off {enforced} appliance(s) that were still running during high-penalty period.",
+            "icon": "bot",
+            "color": "text-amber-600",
+            "bg_color": "bg-amber-50",
+        }).execute()
+
+    return {"enforced": enforced}
+
+
 # ── Legacy rule execution (backward compat) ─────────────────────────
 
 async def _execute_legacy_rules(home_id: str, user_id: str | None, db) -> dict:

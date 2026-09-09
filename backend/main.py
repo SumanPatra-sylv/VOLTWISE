@@ -23,6 +23,9 @@ from app.config import get_settings
 from app.routers.appliances import router as appliances_router
 from app.routers.autopilot import router as autopilot_router
 from app.routers.power_analytics import router as power_analytics_router
+from app.routers.admin_chat import router as admin_chat_router
+from app.routers.admin import router as admin_router
+from app.routers.billing import router as billing_router
 from app.routers.plugs import router as plugs_router
 from app.services.scheduler_manager import set_scheduler, restore_active_schedules
 from app.services.transition_watcher import tariff_transition_watcher
@@ -145,6 +148,9 @@ app.add_middleware(
 app.include_router(appliances_router)
 app.include_router(autopilot_router)
 app.include_router(power_analytics_router)
+app.include_router(admin_chat_router)
+app.include_router(admin_router)
+app.include_router(billing_router)
 app.include_router(plugs_router)
 
 

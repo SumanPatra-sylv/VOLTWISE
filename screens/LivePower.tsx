@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
     PieChart, Pie, Cell, ResponsiveContainer, AreaChart, Area, XAxis, Tooltip, CartesianGrid, BarChart, Bar,
 } from 'recharts';
@@ -51,6 +52,7 @@ const SOURCE_CONFIG = {
 // ── Main Component ────────────────────────────────────────────────
 
 const LivePower: React.FC<LivePowerProps> = ({ viewMode = 'mobile' }) => {
+    const { t } = useTranslation();
     const isCompact = viewMode === 'web' || viewMode === 'tablet';
     const { home } = useApp();
 
@@ -274,7 +276,7 @@ const LivePower: React.FC<LivePowerProps> = ({ viewMode = 'mobile' }) => {
 
                 {/* ── Header ───────────────────────────────────────── */}
                 <div className="flex items-center justify-between mb-6">
-                    <h2 className="text-2xl font-bold text-slate-800">Analytics</h2>
+                    <h2 className="text-2xl font-bold text-slate-800">{t('livePower.title')}</h2>
                     <div className="flex items-center gap-2">
                         {/* Live Feed Button */}
                         <button
@@ -282,7 +284,7 @@ const LivePower: React.FC<LivePowerProps> = ({ viewMode = 'mobile' }) => {
                             className="flex items-center gap-2 bg-gradient-to-r from-cyan-500 to-indigo-500 text-white px-4 py-2 rounded-full shadow-lg shadow-cyan-200/50 hover:shadow-cyan-300/60 active:scale-95 transition-all"
                         >
                             <Activity className="w-4 h-4" />
-                            <span className="text-xs font-bold">Live Feed</span>
+                            <span className="text-xs font-bold">{t('livePower.title')}</span>
                             <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
                         </button>
                         <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-full border border-slate-200 shadow-sm">

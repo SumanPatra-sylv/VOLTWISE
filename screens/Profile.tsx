@@ -1,9 +1,12 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, Settings, Shield, LogOut, ChevronRight, MapPin, Zap, TreePine, Bell, FileText, Plug } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { User, Settings, Shield, LogOut, ChevronRight, MapPin, Zap, TreePine, Bell, FileText, Plug, ShieldCheck, Globe } from 'lucide-react';
 import { Tab } from '../types';
 import { useApp } from '../contexts/AppContext';
 import { getCarbonDashboard } from '../services/api';
+import { supabase } from '../services/supabase';
+import LanguageSwitcher from '../components/LanguageSwitcher';
 
 type ViewMode = 'mobile' | 'tablet' | 'web';
 
@@ -24,10 +27,12 @@ function getInitials(name: string): string {
 }
 
 const Profile: React.FC<ProfileProps> = ({ viewMode = 'mobile', onNavigate }) => {
+    const { t } = useTranslation();
     const isCompact = viewMode === 'web' || viewMode === 'tablet';
 
     // Real data from AppContext
-    const { profile, home, meter, signOut, isAuthReady } = useApp();
+    const { profile, home, meter, signOut, isAuthReady, viewAsConsumer, setViewAsConsumer } = useApp();
+    const isAdmin = profile?.role === 'admin' || profile?.role === 'super_admin';
     const userName = profile?.name || 'User';
     const initials = getInitials(userName);
     const location = profile?.location || '—';
@@ -36,6 +41,7 @@ const Profile: React.FC<ProfileProps> = ({ viewMode = 'mobile', onNavigate }) =>
     // Carbon stats — kWh shifted and trees equivalent from Rewards page logic
     const [kwhSaved, setKwhSaved] = useState<number>(0);
     const [treesPlanted, setTreesPlanted] = useState<number>(0);
+    const [unreadNotifCount, setUnreadNotifCount] = useState<number>(0);
 
     useEffect(() => {
         if (!isAuthReady || !home?.id) return;
@@ -46,6 +52,19 @@ const Profile: React.FC<ProfileProps> = ({ viewMode = 'mobile', onNavigate }) =>
             }
         }).catch(() => { /* keep zeros on error */ });
     }, [home?.id, isAuthReady]);
+
+    // Fetch real unread notification count
+    useEffect(() => {
+        if (!profile?.id) return;
+        supabase
+            .from('notifications')
+            .select('id', { count: 'exact', head: true })
+            .eq('user_id', profile.id)
+            .eq('is_read', false)
+            .then(({ count }) => {
+                setUnreadNotifCount(count || 0);
+            });
+    }, [profile?.id]);
 
     const handleSignOut = async () => {
         try {
@@ -71,7 +90,7 @@ const Profile: React.FC<ProfileProps> = ({ viewMode = 'mobile', onNavigate }) =>
                 </div>
                 {consumerNumber && (
                     <div className="text-xs text-slate-300 font-mono mt-1">
-                        Consumer: {consumerNumber}
+                        {t('profile.consumerNo')}: {consumerNumber}
                     </div>
                 )}
             </div>
@@ -83,7 +102,7 @@ const Profile: React.FC<ProfileProps> = ({ viewMode = 'mobile', onNavigate }) =>
                         <Zap className="w-5 h-5 fill-current" />
                     </div>
                     <div className="text-2xl font-bold text-slate-800">{kwhSaved.toLocaleString()}</div>
-                    <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">kWh Saved</div>
+                    <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">{t('carbon.kwhShiftedLabel')}</div>
                 </div>
 
                 <div className="bg-white p-5 rounded-[2rem] shadow-soft border border-slate-100 flex flex-col items-center text-center">
@@ -91,7 +110,7 @@ const Profile: React.FC<ProfileProps> = ({ viewMode = 'mobile', onNavigate }) =>
                         <TreePine className="w-5 h-5" />
                     </div>
                     <div className="text-2xl font-bold text-slate-800">{treesPlanted}</div>
-                    <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Trees Planted</div>
+                    <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">{t('carbon.treesEquivalent')}</div>
                 </div>
             </div>
 
@@ -100,36 +119,61 @@ const Profile: React.FC<ProfileProps> = ({ viewMode = 'mobile', onNavigate }) =>
 
                 {/* Quick Actions - New Pages */}
                 <div>
-                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-2 mb-3">Quick Actions</h3>
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-2 mb-3">{t('profile.settings')}</h3>
                     <div className="bg-white rounded-[2rem] shadow-soft border border-slate-100 overflow-hidden">
-                        <SettingItem icon={Plug} label="Smart Plug Setup" value="Add Device" onClick={() => onNavigate?.('SmartPlugSetup')} />
+                        <SettingItem icon={Plug} label={t('profile.smartPlug')} value={t('control.addAppliance')} onClick={() => onNavigate?.('SmartPlugSetup')} />
                         <div className="h-[1px] bg-slate-50 w-full"></div>
-                        <SettingItem icon={FileText} label="Bill History" value="View All" onClick={() => onNavigate?.('BillHistory')} />
+                        <SettingItem icon={FileText} label={t('profile.billHistory')} value={t('home.viewAll')} onClick={() => onNavigate?.('BillHistory')} />
                         <div className="h-[1px] bg-slate-50 w-full"></div>
-                        <SettingItem icon={Bell} label="Notifications" value="3 New" onClick={() => onNavigate?.('Notifications')} />
+                        <SettingItem icon={Bell} label={t('profile.notifications')} value={unreadNotifCount > 0 ? `${unreadNotifCount} ${t('common.active')}` : '✓'} onClick={() => onNavigate?.('Notifications')} />
                     </div>
                 </div>
 
                 {/* Account Group */}
                 <div>
-                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-2 mb-3">My Home</h3>
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-2 mb-3">{t('profile.meterInfo')}</h3>
                     <div className="bg-white rounded-[2rem] shadow-soft border border-slate-100 overflow-hidden">
-                        <SettingItem icon={User} label="Home" value={home?.name || '—'} />
+                        <SettingItem icon={User} label={t('nav.home')} value={home?.name || '—'} />
                         <div className="h-[1px] bg-slate-50 w-full"></div>
-                        <SettingItem icon={Zap} label="Tariff Category" value={home?.tariff_category || '—'} />
+                        <SettingItem icon={Zap} label={t('onboarding.category')} value={home?.tariff_category || '—'} />
                         <div className="h-[1px] bg-slate-50 w-full"></div>
-                        <SettingItem icon={Zap} label="Sanctioned Load" value={home?.sanctioned_load_kw ? `${home.sanctioned_load_kw} kW` : '—'} />
+                        <SettingItem icon={Zap} label={t('onboarding.load')} value={home?.sanctioned_load_kw ? `${home.sanctioned_load_kw} kW` : '—'} />
                     </div>
                 </div>
 
                 {/* Preferences Group */}
                 <div>
-                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-2 mb-3">App Settings</h3>
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-2 mb-3">{t('language.title')}</h3>
+                    <div className="bg-white rounded-[2rem] shadow-soft border border-slate-100 overflow-hidden p-4">
+                        <LanguageSwitcher variant="full" />
+                    </div>
+                </div>
+
+                {/* Preferences Group */}
+                <div>
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-2 mb-3">{t('profile.settings')}</h3>
                     <div className="bg-white rounded-[2rem] shadow-soft border border-slate-100 overflow-hidden">
-                        <SettingItem icon={Settings} label="Notifications" />
+                        <SettingItem icon={Settings} label={t('profile.notifications')} />
                         <div className="h-[1px] bg-slate-50 w-full"></div>
                         <SettingItem icon={Shield} label="Privacy & Security" />
                         <div className="h-[1px] bg-slate-50 w-full"></div>
+                        {isAdmin && viewAsConsumer && (
+                            <>
+                                <button
+                                    onClick={() => setViewAsConsumer(false)}
+                                    className="w-full flex items-center justify-between p-5 hover:bg-cyan-50 transition-colors text-cyan-700"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-8 h-8 rounded-xl bg-cyan-50 flex items-center justify-center">
+                                            <ShieldCheck className="w-4 h-4" />
+                                        </div>
+                                        <span className="font-bold text-sm">Back to Admin Panel</span>
+                                    </div>
+                                    <ChevronRight className="w-4 h-4 text-cyan-400" />
+                                </button>
+                                <div className="h-[1px] bg-slate-50 w-full"></div>
+                            </>
+                        )}
                         <button
                             onClick={handleSignOut}
                             className="w-full flex items-center justify-between p-5 hover:bg-slate-50 transition-colors text-rose-500"
@@ -138,7 +182,7 @@ const Profile: React.FC<ProfileProps> = ({ viewMode = 'mobile', onNavigate }) =>
                                 <div className="w-8 h-8 rounded-xl bg-rose-50 flex items-center justify-center">
                                     <LogOut className="w-4 h-4" />
                                 </div>
-                                <span className="font-bold text-sm">Log Out</span>
+                                <span className="font-bold text-sm">{t('profile.logout')}</span>
                             </div>
                         </button>
                     </div>

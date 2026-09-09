@@ -6,6 +6,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { X, Zap, Clock, Calendar, Play, Leaf, Timer, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { DBAppliance, DBTariffSlot } from '../types/database';
@@ -50,6 +51,7 @@ const InterceptorModal: React.FC<InterceptorModalProps> = ({
     onEcoMode,
 }) => {
     const [durationHours, setDurationHours] = useState(0.5);
+    const { t } = useTranslation();
     const [customDurationMin, setCustomDurationMin] = useState(45);
     const [showCustomTime, setShowCustomTime] = useState(false);
     const [customHour, setCustomHour] = useState(() => (currentHour + 2) % 24); // default to 2 hours from now
@@ -79,14 +81,15 @@ const InterceptorModal: React.FC<InterceptorModalProps> = ({
     const currentSlot = getSlotForHour(currentHour, slots);
     const currentCostPerHour = (appliance.rated_power_w / 1000) * (currentSlot?.rate || 0);
 
-    // Insert schedule into Supabase (upsert: delete old → insert new)
+    // Insert schedule into Supabase (deactivate conflicting schedules only)
     const handleSchedule = async (option: ScheduleOption) => {
         setScheduling(true);
         try {
-            // Delete any existing active schedules for this appliance
+            // Only deactivate existing active schedules for this specific appliance
+            // (mark inactive rather than hard-delete, so history is preserved)
             await supabase
                 .from('schedules')
-                .delete()
+                .update({ is_active: false, updated_at: new Date().toISOString() })
                 .eq('appliance_id', appliance.id)
                 .eq('is_active', true);
 
@@ -147,7 +150,7 @@ const InterceptorModal: React.FC<InterceptorModalProps> = ({
                                 <div className="w-8 h-8 rounded-xl bg-rose-100 flex items-center justify-center">
                                     <Zap className="w-4 h-4 text-rose-600" />
                                 </div>
-                                <h2 className="text-lg font-bold text-slate-800">Wait! Expensive Time</h2>
+                                <h2 className="text-lg font-bold text-slate-800">{t('interceptor.title')}</h2>
                             </div>
                             <p className="text-sm text-slate-500">
                                 Running <span className="font-semibold text-slate-700">{appliance.name}</span> now costs{' '}
@@ -162,7 +165,7 @@ const InterceptorModal: React.FC<InterceptorModalProps> = ({
 
                     {/* Duration Selector */}
                     <div className="mb-5">
-                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block">Duration</label>
+                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block">{t('interceptor.duration')}</label>
                         <div className="relative">
                             <button
                                 onClick={() => setShowDurationDropdown(!showDurationDropdown)}
@@ -239,8 +242,8 @@ const InterceptorModal: React.FC<InterceptorModalProps> = ({
                                 <Leaf className="w-5 h-5 text-emerald-600" />
                             </div>
                             <div className="flex-1 text-left">
-                                <p className="font-bold text-emerald-700 text-sm">Enable Eco Mode (26°C)</p>
-                                <p className="text-xs text-emerald-600">Save ~{Math.round(ECO_MODE_REDUCTION * 100)}% power</p>
+                                <p className="font-bold text-emerald-700 text-sm">{t('interceptor.enableEco')}</p>
+                                <p className="text-xs text-emerald-600">{t('interceptor.savePower', { percent: Math.round(ECO_MODE_REDUCTION * 100) })}</p>
                             </div>
                         </button>
                     )}
@@ -296,13 +299,13 @@ const InterceptorModal: React.FC<InterceptorModalProps> = ({
                                 className="w-full p-4 rounded-2xl bg-white border-2 border-slate-100 flex items-center gap-3 hover:border-slate-200 hover:bg-slate-50/50 transition-all"
                             >
                                 <Calendar className="w-5 h-5 text-slate-400" />
-                                <p className="font-bold text-sm text-slate-600">Pick a Custom Time</p>
+                                <p className="font-bold text-sm text-slate-600">{t('interceptor.pickCustom')}</p>
                             </button>
                         ) : (
                             <div className="p-4 rounded-2xl bg-white border-2 border-indigo-200 space-y-3">
                                 <div className="flex items-center gap-3">
                                     <Calendar className="w-5 h-5 text-indigo-500" />
-                                    <p className="font-bold text-sm text-slate-700">Custom Time</p>
+                                    <p className="font-bold text-sm text-slate-700">{t('interceptor.customTime')}</p>
                                 </div>
                                 <div className="flex gap-2 flex-wrap">
                                     {/* Show next 24 hours starting from current hour + 1 */}
@@ -349,7 +352,7 @@ const InterceptorModal: React.FC<InterceptorModalProps> = ({
                     >
                         <div className="flex items-center justify-center gap-1.5">
                             <Play className="w-3 h-3" />
-                            Ignore & Run Now (₹{options.runNow.costForDuration.toFixed(2)} for {effectiveDuration < 1 ? `${Math.round(effectiveDuration * 60)}m` : `${effectiveDuration}hr`})
+                            {t('interceptor.ignoreRunNow')} (₹{options.runNow.costForDuration.toFixed(2)})
                         </div>
                     </button>
                 </div>

@@ -1,7 +1,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, AreaChart, Area, XAxis, Tooltip, CartesianGrid } from 'recharts';
-import { ACTIVE_DEVICES_PREVIEW } from '../constants';
 import { ChevronLeft, ChevronRight, Download, Filter, Zap, DollarSign, TrendingUp, Clock, Wind, Thermometer, Box, Tv, Lightbulb, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { getDashboardStats, DashboardStats } from '../services/api';
@@ -35,6 +34,19 @@ const Insights: React.FC<InsightsProps> = ({ viewMode = 'mobile' }) => {
     const [trendData, setTrendData] = useState<{ day: string; kwh: number }[]>([]);
     const [sparkline, setSparkline] = useState<{ value: number }[]>([]);
     const [totalKwh, setTotalKwh] = useState(0);
+    const [activeDevices, setActiveDevices] = useState<{ icon: string; bg: string; color: string }[]>([]);
+
+    // Map category to icon/colors for active devices preview
+    const CATEGORY_DEVICE_MAP: Record<string, { icon: string; bg: string; color: string }> = {
+        ac: { icon: 'wind', bg: 'bg-cyan-100', color: 'text-cyan-600' },
+        geyser: { icon: 'thermometer', bg: 'bg-amber-100', color: 'text-amber-600' },
+        refrigerator: { icon: 'box', bg: 'bg-emerald-100', color: 'text-emerald-600' },
+        washing_machine: { icon: 'box', bg: 'bg-purple-100', color: 'text-purple-600' },
+        fan: { icon: 'wind', bg: 'bg-blue-100', color: 'text-blue-600' },
+        tv: { icon: 'tv', bg: 'bg-rose-100', color: 'text-rose-600' },
+        lighting: { icon: 'lightbulb', bg: 'bg-yellow-100', color: 'text-yellow-600' },
+        other: { icon: 'zap', bg: 'bg-slate-100', color: 'text-slate-600' },
+    };
 
     const fetchData = useCallback(async () => {
         if (!home?.id) return;
@@ -66,6 +78,13 @@ const Insights: React.FC<InsightsProps> = ({ viewMode = 'mobile' }) => {
                     fill: CATEGORY_COLORS[cat] || '#6b7280',
                 })).sort((a, b) => b.value - a.value);
                 setDonutData(donut);
+
+                // Build real active devices preview from ON appliances
+                const onDevices = appliances
+                    .filter(a => a.status === 'ON')
+                    .slice(0, 6)
+                    .map(a => CATEGORY_DEVICE_MAP[a.category] || CATEGORY_DEVICE_MAP.other);
+                setActiveDevices(onDevices);
             }
 
             // Fetch real daily trend data (last 14 days)
@@ -290,7 +309,13 @@ const Insights: React.FC<InsightsProps> = ({ viewMode = 'mobile' }) => {
                     <div>
                         <div className="flex justify-between items-start mb-2">
                             <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-500 flex items-center justify-center"><DollarSign className="w-4 h-4" /></div>
-                            <span className="text-[10px] font-bold text-emerald-500 bg-emerald-50 px-1.5 py-0.5 rounded-lg border border-emerald-100">On Track</span>
+                            {s.monthBill > 0 && s.dailyAvgUsage > 0 && (
+                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-lg border ${
+                                    (s.monthBill / (s.dailyAvgUsage * 30)) <= 1
+                                        ? 'text-emerald-500 bg-emerald-50 border-emerald-100'
+                                        : 'text-amber-500 bg-amber-50 border-amber-100'
+                                }`}>{(s.monthBill / (s.dailyAvgUsage * 30)) <= 1 ? 'On Track' : 'Over Budget'}</span>
+                            )}
                         </div>
                         <div className="text-xs text-slate-400 font-medium">Est. Monthly Bill</div>
                         <div className="text-2xl font-bold text-slate-800 mb-1">₹{s.monthBill}</div>
@@ -322,11 +347,13 @@ const Insights: React.FC<InsightsProps> = ({ viewMode = 'mobile' }) => {
                         <div className="text-2xl font-bold text-slate-800 mb-1">{s.activeDevices} <span className="text-sm text-slate-400 font-normal">devices</span></div>
                     </div>
                     <div className="flex items-center gap-2 mt-2">
-                        {ACTIVE_DEVICES_PREVIEW.map((dev, idx) => (
+                        {activeDevices.length > 0 ? activeDevices.map((dev, idx) => (
                             <div key={idx} className={`w-8 h-8 rounded-full flex items-center justify-center shadow-sm border border-white ${dev.bg} ${dev.color} -ml-1 first:ml-0 relative z-10`}>
                                 {getDeviceIcon(dev.icon)}
                             </div>
-                        ))}
+                        )) : (
+                            <span className="text-xs text-slate-400">No devices ON</span>
+                        )}
                     </div>
                 </motion.div>
 

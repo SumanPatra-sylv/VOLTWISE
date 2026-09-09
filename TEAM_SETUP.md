@@ -1,7 +1,5 @@
 # VoltWise — Team Setup & Work Division (4 People)
 
-> **Share this file with everyone on the team.**
-
 ---
 
 ## 🔧 First: What Everyone Must Install
