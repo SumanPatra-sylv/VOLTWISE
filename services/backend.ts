@@ -455,7 +455,6 @@ export async function getPowerSources(homeId: string): Promise<{ sources: PowerS
     return apiFetch(`/power-analytics/sources?home_id=${homeId}`);
 }
 
-<<<<<<< HEAD
 // ── Billing API ───────────────────────────────────────────────────
 
 export interface BillingMonthEntry {
@@ -578,7 +577,6 @@ export async function getBillingEffectiveRates(
         `/billing/effective-rates?home_id=${homeId}`,
     );
 }
-=======
 // ── Smart Plug API ────────────────────────────────────────────────
 
 export interface PlugStatusData {
@@ -696,4 +694,3 @@ export async function unregisterPlug(plugId: string): Promise<{ success: boolean
     return apiFetch(`/plugs/${plugId}`, { method: 'DELETE' });
 }
 
->>>>>>> 79c5f54edac01d3623b65df8fcd602cf694f9d25
